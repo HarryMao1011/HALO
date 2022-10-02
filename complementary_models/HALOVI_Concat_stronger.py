@@ -38,7 +38,7 @@ if torch.cuda.is_available():
 else:
     device='cpu'
 
-class HALOVAECAT(MULTIVAE):
+class HALOVAECAT2(MULTIVAE):
     """
     Variational auto-encoder model for joint paired + unpaired RNA-seq and ATAC-seq data.
     Parameters
@@ -181,9 +181,9 @@ class HALOVAECAT(MULTIVAE):
         self.beta_1 = beta_1
         self.beta_2  =beta_2
         self.beta_3 = beta_3
-        print("alpha: {}, beta1: {}, beta2: {}, beta3: {}"\
-            .format(self.alpha, self.beta_1, self.beta_2, self.beta_3))
-        print("n_latent_dep :{}, n_latent_indep: {}".format(n_latent_dep, n_latent_indep))    
+        # print("alpha: {}, beta1: {}, beta2: {}, beta3: {}"\
+        #     .format(self.alpha, self.beta_1, self.beta_2, self.beta_3))
+        # print("n_latent_dep :{}, n_latent_indep: {}".format(n_latent_dep, n_latent_indep))    
 
         cat_list = (
             [n_batch] + list(n_cats_per_cov) if n_cats_per_cov is not None else []
@@ -699,8 +699,8 @@ class HALOVAECAT(MULTIVAE):
         
         # print("coupled  ATAC->RNA {}, RNA->ATAC {}".format(a2rscore_coupled, r2ascore_coupled))
 
-        a2rscore_coupled_loss = self.beta_1 * torch.maximum(self.alpha - a2rscore_coupled + 1e-3, torch.tensor(0))
-        r2ascore_coupled_loss = self.beta_1 * torch.maximum(self.alpha - r2ascore_coupled + 1e-3, torch.tensor(0))
+        # a2rscore_coupled_loss = self.beta_1 * torch.maximum(self.alpha - a2rscore_coupled + 1e-3, torch.tensor(0))
+        # r2ascore_coupled_loss = self.beta_1 * torch.maximum(self.alpha - r2ascore_coupled + 1e-3, torch.tensor(0))
 
         # a2rscore_coupled_loss = -self.beta_1 *  a2rscore_coupled 
         # r2ascore_coupled_loss = -self.beta_1 *  r2ascore_coupled 
@@ -716,7 +716,7 @@ class HALOVAECAT(MULTIVAE):
         
 
         a2rscore_lagging, _, _ = torch_infer_nonsta_dir(z_acc_indep, z_expr_indep, time)
-        a2rscore_lagging_loss = self.beta_2 * torch.maximum(a2rscore_lagging-self.alpha+1e-4, torch.tensor(0))
+        # a2rscore_lagging_loss = self.beta_2 * torch.maximum(a2rscore_lagging-self.alpha+1e-4, torch.tensor(0))
 
 
         ## scores of lagging modalities (ATAC --> RNA) should be smaller than (RNA-->ATAC)
@@ -733,8 +733,13 @@ class HALOVAECAT(MULTIVAE):
             # .format(a2rscore_coupled_loss, r2ascore_coupled_loss, a2rscore_lagging_loss, a2r_r2a_score_loss))
         print("independent distance ATAC-RNA {}".format(a2rscore_lagging-r2ascore_lagging))
 
-        nod_loss = a2rscore_coupled_loss.to(torch.float64) + r2ascore_coupled_loss.to(torch.float64) \
-            + a2rscore_lagging_loss.to(torch.float64) + a2r_r2a_score_loss.to(torch.float64)
+        nod_loss = -1 * self.beta_1 *a2rscore_coupled.to(torch.float64) -1 * self.beta_1 * r2ascore_coupled.to(torch.float64) \
+            - self.beta_2 * r2ascore_coupled.to(torch.float64) + self.beta_2 *a2rscore_lagging.to(torch.float64)\
+            + self.beta_3*a2r_r2a_score_loss.to(torch.float64)
+
+
+        # nod_loss = a2rscore_coupled_loss.to(torch.float64) + r2ascore_coupled_loss.to(torch.float64) \
+        #     + a2rscore_lagging_loss.to(torch.float64) + a2r_r2a_score_loss.to(torch.float64)
 
         # KL WARMUP
         # print("kld_paired shape {}".format(kld_paired.shape))
@@ -752,8 +757,12 @@ class HALOVAECAT(MULTIVAE):
         # distance_penalty = kl_weight * torch.pow(z_acc - z_expr, 2).sum(dim=1)
 
         # TOTAL LOSS
-        print(weighted_kl_local)
-        loss = torch.mean(recon_loss.unsqueeze(1) + weighted_kl_local) - nod_loss
+        # print(weighted_kl_local)
+        recon_loss = recon_loss - nod_loss*torch.ones_like(recon_loss)
+        # loss = torch.mean(recon_loss.unsqueeze(1) + weighted_kl_local) - nod_loss
+        loss = torch.mean(recon_loss.unsqueeze(1) + weighted_kl_local) 
+
+        print("recon_loss {}, kl_divergence {}".format(recon_loss.mean(), weighted_kl_local.mean()))
 
         kl_local = dict(kl_divergence_z=kl_div_z)
         kl_global = torch.tensor(0)
@@ -764,7 +773,7 @@ class HALOVAECAT(MULTIVAE):
 
 
 
-class HALOVICAT(MultiVI_Parallel):
+class HALOVICAT2(MultiVI_Parallel):
 
     def __init__(
         self,
@@ -832,7 +841,7 @@ class HALOVICAT(MultiVI_Parallel):
         print("cell type key in registry: {}".format(REGISTRY_KEYS.LABELS_KEY in self.adata_manager.data_registry))
 
         
-        self.module = HALOVAECAT(
+        self.module = HALOVAECAT2(
             n_input_genes=n_genes,
             n_input_regions=n_regions,
             n_batch=self.summary_stats.n_batch,

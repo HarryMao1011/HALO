@@ -728,6 +728,7 @@ class HALOVAE(MULTIVAE):
         # TOTAL LOSS
         loss = torch.mean(recon_loss.unsqueeze(1) + weighted_kl_local + nod_loss)
 
+        kl_div_z = kl_div_z + nod_loss
         kl_local = dict(kl_divergence_z=kl_div_z)
         kl_global = torch.tensor(0.0)
 
