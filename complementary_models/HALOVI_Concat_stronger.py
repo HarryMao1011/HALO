@@ -99,8 +99,8 @@ class HALOVAECAT2(MULTIVAE):
         n_batch: int = 0,
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
         n_hidden: Optional[int] = None,
-        n_latent_dep: Optional[int] = 10,
-        n_latent_indep: Optional[int] = 10,
+        n_latent_dep: Optional[int] = 5,
+        n_latent_indep: Optional[int] = 5,
         n_layers_encoder: int = 2,
         n_layers_decoder: int = 2,
         n_continuous_cov: int = 0,
@@ -147,6 +147,7 @@ class HALOVAECAT2(MULTIVAE):
         self.n_input_genes = n_input_genes
         self.n_latent_dep = n_latent_dep
         self.n_latent_indep = n_latent_indep
+        print(n_latent_indep)
 
         self.n_hidden = (
             int(np.sqrt(self.n_input_regions + self.n_input_genes))
@@ -673,15 +674,15 @@ class HALOVAECAT2(MULTIVAE):
         qzv_acc_indep= inference_outputs ['qzv_acc_indep']
         time = inference_outputs['time_key']
 
-        kl_div_z = 5* kld(
+        kl_div_z = 100* kld(
             Normal(qzm_expr, torch.sqrt(qzv_expr)), Normal(0, 1)
-        ) + 5 *kld(
+        ) + 100 *kld(
             Normal(qzm_acc, torch.sqrt(qzv_acc)), Normal(0, 1)
         )
 
         kld_paired = kld(
             Normal(qzm_expr_dep, qzv_expr_dep.sqrt()), Normal(qzm_acc_dep, qzv_acc_dep.sqrt())
-        ) + kld(
+        ) + 100*kld(
             Normal(qzm_acc_dep, qzv_acc_dep.sqrt()), Normal(qzm_expr_dep, qzv_expr_dep.sqrt()))
 
         kld_paired = torch.cat([kld_paired, torch.zeros_like(qzm_acc_indep, dtype=torch.float64).to(device)], axis=-1) 
@@ -698,9 +699,10 @@ class HALOVAECAT2(MULTIVAE):
         r2ascore_coupled, _, _ = torch_infer_nonsta_dir(z_expr_dep, z_acc_dep, time)
         
         # print("coupled  ATAC->RNA {}, RNA->ATAC {}".format(a2rscore_coupled, r2ascore_coupled))
+        self.alpha=0.01
 
-        # a2rscore_coupled_loss = self.beta_1 * torch.maximum(self.alpha - a2rscore_coupled + 1e-3, torch.tensor(0))
-        # r2ascore_coupled_loss = self.beta_1 * torch.maximum(self.alpha - r2ascore_coupled + 1e-3, torch.tensor(0))
+        a2rscore_coupled_loss = torch.maximum(self.alpha - a2rscore_coupled + 1e-3, torch.tensor(0))
+        r2ascore_coupled_loss = torch.maximum(self.alpha - r2ascore_coupled + 1e-3, torch.tensor(0))
 
         # a2rscore_coupled_loss = -self.beta_1 *  a2rscore_coupled 
         # r2ascore_coupled_loss = -self.beta_1 *  r2ascore_coupled 
@@ -716,12 +718,8 @@ class HALOVAECAT2(MULTIVAE):
         
 
         a2rscore_lagging, _, _ = torch_infer_nonsta_dir(z_acc_indep, z_expr_indep, time)
-        # a2rscore_lagging_loss = self.beta_2 * torch.maximum(a2rscore_lagging-self.alpha+1e-4, torch.tensor(0))
-
-
-        ## scores of lagging modalities (ATAC --> RNA) should be smaller than (RNA-->ATAC)
         r2ascore_lagging, _, _ = torch_infer_nonsta_dir(z_expr_indep, z_acc_indep, time)
-        a2r_r2a_score_loss = self.beta_3 * torch.maximum(a2rscore_lagging-r2ascore_lagging+1e-4, torch.tensor(0))
+        a2r_r2a_score_loss =  torch.maximum(a2rscore_lagging-r2ascore_lagging+1e-4, torch.tensor(0))
 
         # print("Lagging ATAC->RNA score {}, RNA->ATAC {}". format(a2rscore_lagging, r2ascore_lagging))
         # print("a2r_r2a_score_loss loss {}".format(a2r_r2a_score_loss))
@@ -731,11 +729,21 @@ class HALOVAECAT2(MULTIVAE):
         # print("a2rscore_coupled_loss type {} /n,r2ascore_coupled_loss type ".format(type(a2rscore_coupled_loss), ))
         # print("a2rscore_coupled_loss: {} , r2ascore_coupled_loss: {} /n a2rscore_lagging_loss: {},  a2r_r2a_score_loss: {}"\
             # .format(a2rscore_coupled_loss, r2ascore_coupled_loss, a2rscore_lagging_loss, a2r_r2a_score_loss))
-        print("independent distance ATAC-RNA {}".format(a2rscore_lagging-r2ascore_lagging))
+        # print("independent distance ATAC-RNA {}".format(a2rscore_lagging-r2ascore_lagging))
 
-        nod_loss = -1 * self.beta_1 *a2rscore_coupled.to(torch.float64) -1 * self.beta_1 * r2ascore_coupled.to(torch.float64) \
-            - self.beta_2 * r2ascore_coupled.to(torch.float64) + self.beta_2 *a2rscore_lagging.to(torch.float64)\
-            + self.beta_3*a2r_r2a_score_loss.to(torch.float64)
+        # nod_loss = -1 *self.beta_1 *(-1 * a2rscore_coupled.to(torch.float64) -1 * r2ascore_coupled.to(torch.float64) \
+        #     -  r2ascore_coupled.to(torch.float64) +  a2rscore_lagging.to(torch.float64)\
+        #     + a2r_r2a_score_loss.to(torch.float64))
+
+        nod_weight = 0
+
+        self.beta_2 = 5e5
+        self.beta_3 = 1e8
+        self.beta_1 = 1e6
+        nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64)  + self.beta_3 * a2r_r2a_score_loss + \
+        self.beta_2 * a2rscore_coupled_loss + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss
+
+        # nod_loss =  nod_loss - self.beta_2 * r2ascore_lagging.to(torch.float64)-self.beta_2 * a2rscore_coupled.to(torch.float64) -self.beta_2*r2ascore_coupled
 
 
         # nod_loss = a2rscore_coupled_loss.to(torch.float64) + r2ascore_coupled_loss.to(torch.float64) \
@@ -744,29 +752,41 @@ class HALOVAECAT2(MULTIVAE):
         # KL WARMUP
         # print("kld_paired shape {}".format(kld_paired.shape))
 
+        # print("kld {}, nod_loss {}".format(kl_div_z.mean(), nod_loss))
+        # # kl_div_z =kl_div_z + nod_loss * torch.ones_like(kl_div_z)
+        # print("after changes {}".format(kl_div_z.mean()))
+
         kl_local_for_warmup = kl_div_z + kld_paired
+
+
         weighted_kl_local = kl_weight * kl_local_for_warmup
 
         # print("kld_paired shape {}".format(kld_paired.shape))
         # print("weighted_kl_local shape {}".format(weighted_kl_local.shape))
-        # print("reconstructon loss {}".format(recon_loss.unsqueeze(1).shape))
+        # print("before reconstructon loss {}, nod_loss {}".format(recon_loss.mean(), nod_loss))
         # print("nod loss {}".format(nod_loss.shape))
-
+        # print(type(nod_loss))
+        weight = 1
+        recon_loss = weight* recon_loss + nod_weight *nod_loss * torch.ones_like(recon_loss)
+        print("n_indep: {} after reconstructon loss {}, beta:{}".format(self.n_latent_indep, recon_loss.mean(), self.beta_1))
 
         # PENALTY
         # distance_penalty = kl_weight * torch.pow(z_acc - z_expr, 2).sum(dim=1)
 
         # TOTAL LOSS
         # print(weighted_kl_local)
-        recon_loss = recon_loss - nod_loss*torch.ones_like(recon_loss)
-        # loss = torch.mean(recon_loss.unsqueeze(1) + weighted_kl_local) - nod_loss
-        loss = torch.mean(recon_loss.unsqueeze(1) + weighted_kl_local) 
+        # recon_loss = recon_loss 
 
-        print("recon_loss {}, kl_divergence {}".format(recon_loss.mean(), weighted_kl_local.mean()))
+        loss = torch.mean(recon_loss.unsqueeze(1) + weighted_kl_local)
+        # loss = torch.mean(recon_loss.unsqueeze(1))
+
+        # loss = torch.mean(recon_loss.unsqueeze(1) + weighted_kl_local) 
+
+        # print("plus recon_loss {} {}, kl_divergence {}, {}".format(recon_loss.mean(), recon_loss.shape, weighted_kl_local.mean(), weighted_kl_local.shape))
 
         kl_local = dict(kl_divergence_z=kl_div_z)
         kl_global = torch.tensor(0)
-        print("independent distance ATAC-RNA {}, nod_loss {}".format(a2rscore_lagging-r2ascore_lagging, nod_loss))
+        # print("independent distance ATAC-RNA {}, nod_loss {}".format(a2rscore_lagging-r2ascore_lagging, nod_loss))
 
         # print("loss : {}, recon_loss: {}".format(loss, recon_loss))
         return LossRecorder(loss, recon_loss, kl_local, kl_global)
@@ -781,7 +801,7 @@ class HALOVICAT2(MultiVI_Parallel):
         n_genes: int,
         n_regions: int,
         n_hidden: Optional[int] = None,
-        n_latent_dep: Optional[int] = 15,
+        n_latent_dep: Optional[int] = 5,
         n_latent_indep: Optional[int] = 5,
         n_layers_encoder: int = 2,
         n_layers_decoder: int = 2,
@@ -1072,5 +1092,113 @@ class HALOVICAT2(MultiVI_Parallel):
         return torch.cat(latent_atac).numpy(), torch.cat(latent_expr).numpy(), \
             torch.cat(latent_atac_dep).numpy(), torch.cat(latent_expr_dep).numpy(), \
                 torch.cat(latent_atac_indep).numpy(), torch.cat(latent_expr_indep).numpy(), torch.cat(times).numpy()
+
+    def train(
+        self,
+        max_epochs: int = 500,
+        lr: float = 1e-4,
+        use_gpu: Optional[Union[str, int, bool]] = None,
+        train_size: float = 0.9,
+        validation_size: Optional[float] = None,
+        batch_size: int = 128,
+        weight_decay: float = 1e-3,
+        eps: float = 1e-08,
+        early_stopping: bool = True,
+        save_best: bool = True,
+        check_val_every_n_epoch: Optional[int] = None,
+        n_steps_kl_warmup: Optional[int] = None,
+        n_epochs_kl_warmup: Optional[int] = 50,
+        adversarial_mixing: bool = False,
+        plan_kwargs: Optional[dict] = None,
+        **kwargs,
+    ):
+        """
+        Trains the model using amortized variational inference.
+        Parameters
+        ----------
+        max_epochs
+            Number of passes through the dataset.
+        lr
+            Learning rate for optimization.
+        use_gpu
+            Use default GPU if available (if None or True), or index of GPU to use (if int),
+            or name of GPU (if str), or use CPU (if False).
+        train_size
+            Size of training set in the range [0.0, 1.0].
+        validation_size
+            Size of the test set. If `None`, defaults to 1 - `train_size`. If
+            `train_size + validation_size < 1`, the remaining cells belong to a test set.
+        batch_size
+            Minibatch size to use during training.
+        weight_decay
+            weight decay regularization term for optimization
+        eps
+            Optimizer eps
+        early_stopping
+            Whether to perform early stopping with respect to the validation set.
+        save_best
+            Save the best model state with respect to the validation loss, or use the final
+            state in the training procedure
+        check_val_every_n_epoch
+            Check val every n train epochs. By default, val is not checked, unless `early_stopping` is `True`.
+            If so, val is checked every epoch.
+        n_steps_kl_warmup
+            Number of training steps (minibatches) to scale weight on KL divergences from 0 to 1.
+            Only activated when `n_epochs_kl_warmup` is set to None. If `None`, defaults
+            to `floor(0.75 * adata.n_obs)`.
+        n_epochs_kl_warmup
+            Number of epochs to scale weight on KL divergences from 0 to 1.
+            Overrides `n_steps_kl_warmup` when both are not `None`.
+        adversarial_mixing
+            Whether to use adversarial training to penalize the model for umbalanced mixing of modalities.
+        plan_kwargs
+            Keyword args for :class:`~scvi.train.TrainingPlan`. Keyword arguments passed to
+            `train()` will overwrite values present in `plan_kwargs`, when appropriate.
+        **kwargs
+            Other keyword args for :class:`~scvi.train.Trainer`.
+        """
+        update_dict = dict(
+            lr=lr,
+            adversarial_classifier=adversarial_mixing,
+            weight_decay=weight_decay,
+            eps=eps,
+            n_epochs_kl_warmup=n_epochs_kl_warmup,
+            n_steps_kl_warmup=n_steps_kl_warmup,
+            optimizer="AdamW",
+            scale_adversarial_loss=1,
+        )
+        if plan_kwargs is not None:
+            plan_kwargs.update(update_dict)
+        else:
+            plan_kwargs = update_dict
+
+        if save_best:
+            if "callbacks" not in kwargs.keys():
+                kwargs["callbacks"] = []
+            kwargs["callbacks"].append(
+                SaveBestState(monitor="reconstruction_loss_validation")
+            )
+
+        data_splitter = DataSplitter(
+            self.adata_manager,
+            train_size=train_size,
+            validation_size=validation_size,
+            batch_size=batch_size,
+            use_gpu=use_gpu,
+        )
+        training_plan = AdversarialTrainingPlan(self.module, **plan_kwargs)
+        runner = TrainRunner(
+            self,
+            training_plan=training_plan,
+            data_splitter=data_splitter,
+            max_epochs=max_epochs,
+            use_gpu=use_gpu,
+            early_stopping=early_stopping,
+            check_val_every_n_epoch=check_val_every_n_epoch,
+            early_stopping_monitor="reconstruction_loss_validation",
+            early_stopping_patience=50,
+            **kwargs,
+        )
+        return runner()            
 
     
