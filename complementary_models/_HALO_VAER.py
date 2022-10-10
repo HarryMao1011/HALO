@@ -23,6 +23,7 @@ from scvi.module._peakvae import Decoder as DecoderPeakVI
 
 from scvi.module import VAE 
 from torch.distributions import kl_divergence as kld
+from .utils import torch_infer_nonsta_dir
 
 torch.backends.cudnn.benchmark = True
 
@@ -105,6 +106,8 @@ class HALOVAER(BaseModuleClass):
         n_labels: int = 0,
         n_hidden: int = 128,
         n_latent: int = 10,
+        ## coupled latent variables number
+        n_latent_dep: int = 5 , 
         n_layers: int = 1,
         ####
         n_layers_encoder: int = 2,
@@ -141,6 +144,7 @@ class HALOVAER(BaseModuleClass):
         self.n_input_genes = n_input_genes
         self.dispersion = dispersion
         self.n_latent = n_latent
+        self.n_latent_dep = n_latent_dep
         self.log_variational = log_variational
         self.gene_likelihood = gene_likelihood
         # Automatically deactivate if useless
@@ -460,12 +464,36 @@ class HALOVAER(BaseModuleClass):
             encoder_input_accessibility, batch_index, *categorical_input
         )
 
+
+
         if n_samples > 1:
             untran_za = qz_acc.sample((n_samples,))
             z_acc = self.z_encoder_accessibility.z_transformation(untran_za)
             libsize_acc = libsize_acc.unsqueeze(0).expand(
                 (n_samples, libsize_acc.size(0), libsize_acc.size(1))
             )
+
+        qzm_acc = qz_acc.loc
+        qzm_expr = qz.loc
+        qzv_acc = qz_acc.scale**2
+        qzv_expr = qz.scale**2
+        ## define coupled components
+        qzm_acc_dep = qzm_acc[:, :self.n_latent_dep]
+        qzm_expr_dep = qzm_expr[:, :self.n_latent_dep]
+        qzv_acc_dep = qzv_acc[:, :self.n_latent_dep]
+        qzv_expr_dep = qzv_expr[:, :self.n_latent_dep]
+
+        ## define decoupled components
+        qzm_acc_indep = qzm_acc[:, self.n_latent_dep:]
+        qzm_expr_indep = qzm_expr[:, self.n_latent_dep:]
+        qzv_acc_indep = qzv_acc[:, self.n_latent_dep:]
+        qzv_expr_indep = qzv_expr[:, self.n_latent_dep:]
+
+        z_expr_dep = z[:, :self.n_latent_dep]
+        z_expr_indep = z[:, self.n_latent_dep:]
+
+        z_acc_dep = z_acc[:, :self.n_latent_dep]
+        z_acc_indep = z_acc[:, self.n_latent_dep:]
 
 
         outputs = dict(z=z, 
@@ -474,8 +502,28 @@ class HALOVAER(BaseModuleClass):
         library=library,
         qz_acc = qz_acc,
         z_acc = z_acc,
-        libsize_acc=libsize_acc
-    
+        libsize_acc=libsize_acc,
+
+        ### add coupled and decoupled components
+
+        z_expr_dep=z_expr_dep,
+        z_acc_dep=z_acc_dep,
+        
+        qzm_expr_dep=qzm_expr_dep,
+        qzv_expr_dep=qzv_expr_dep,
+        qzm_acc_dep=qzm_acc_dep,
+        qzv_acc_dep=qzv_acc_dep,
+
+
+        ## lagging part 
+        z_expr_indep=z_expr_indep,
+        z_acc_indep=z_acc_indep,
+        qzm_expr_indep=qzm_expr_indep,
+        qzv_expr_indep=qzv_expr_indep,
+        qzm_acc_indep=qzm_acc_indep,
+        qzv_acc_indep=qzv_acc_indep,
+        time_key = time_index
+
         )
         return outputs
 
@@ -661,27 +709,111 @@ class HALOVAER(BaseModuleClass):
     
         reconst_loss = 0
         weighted_kl_local = 0
-        if self.finetune != 1:
-            if self.expr_train and not self.acc_train:
-            ### RNA only
-                reconst_loss = -generative_outputs["px"].log_prob(x).sum(-1)
-                # print("RNA reconst_losss shape {}".format(reconst_loss.shape))
-                kl_local_for_warmup = kl_divergence_z
-                kl_local_no_warmup = kl_divergence_l
-                weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
 
-            elif  not self.expr_train and  self.acc_train:
-                reconst_loss = rl_accessibility
-                # print("ATAC reconst_losss shape {}".format(reconst_loss.shape))
-                kl_local_for_warmup = kl_divergence_acc
-                weighted_kl_local = kl_weight * kl_local_for_warmup 
 
-            elif  self.expr_train and  self.acc_train:
-                reconst_loss = -(self.n_input_regions +0.0)/(self.n_input_genes)*generative_outputs["px"].log_prob(x).sum(-1) + rl_accessibility
-                kl_local_for_warmup = kl_divergence_z + kl_divergence_acc
-                kl_local_no_warmup = kl_divergence_l
-                weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
 
+        if self.expr_train and not self.acc_train:
+        ### RNA only
+            reconst_loss = -generative_outputs["px"].log_prob(x).sum(-1)
+            # print("RNA reconst_losss shape {}".format(reconst_loss.shape))
+            kl_local_for_warmup = kl_divergence_z
+            kl_local_no_warmup = kl_divergence_l
+            weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
+
+        elif  not self.expr_train and  self.acc_train:
+            reconst_loss = rl_accessibility
+            # print("ATAC reconst_losss shape {}".format(reconst_loss.shape))
+            kl_local_for_warmup = kl_divergence_acc
+            weighted_kl_local = kl_weight * kl_local_for_warmup 
+
+        elif  self.expr_train and  self.acc_train:
+            reconst_loss = -(self.n_input_regions +0.0)/(self.n_input_genes)*generative_outputs["px"].log_prob(x).sum(-1) + rl_accessibility
+            kl_local_for_warmup = kl_divergence_z + kl_divergence_acc
+            kl_local_no_warmup = kl_divergence_l
+            weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
+        
+        if self.finetune == 1:
+            z_expr_dep=inference_outputs['z_expr_dep']       
+            z_acc_dep=inference_outputs['z_acc_dep']
+
+            qzm_expr_dep=inference_outputs['qzm_expr_dep']
+            qzv_expr_dep=inference_outputs['qzv_expr_dep']
+            qzm_acc_dep=inference_outputs['qzm_acc_dep']
+            qzv_acc_dep=inference_outputs['qzv_acc_dep']
+
+            # print("loss qzv_acc_dep type: {}".format(type(qzv_acc_dep)) )       
+            ## lagging part 
+            z_expr_indep=inference_outputs['z_expr_indep']
+            z_acc_indep= inference_outputs['z_acc_indep']
+
+            time = inference_outputs['time_key']
+
+            kld_paired = kld(
+            Normal(qzm_expr_dep, qzv_expr_dep.sqrt()), Normal(qzm_acc_dep, qzv_acc_dep.sqrt())) + kld(
+            Normal(qzm_acc_dep, qzv_acc_dep.sqrt()), Normal(qzm_expr_dep, qzv_expr_dep.sqrt()))
+            kld_paired = kld_paired.sum(dim=1)
+
+            a2rscore_coupled, _, _ = torch_infer_nonsta_dir(z_acc_dep, z_expr_dep, time)
+            r2ascore_coupled, _, _ = torch_infer_nonsta_dir(z_expr_dep, z_acc_dep, time)
+            self.alpha=0.02
+            a2rscore_coupled_loss = torch.maximum(self.alpha - a2rscore_coupled + 1e-3, torch.tensor(0))
+            r2ascore_coupled_loss = torch.maximum(self.alpha - r2ascore_coupled + 1e-3, torch.tensor(0))
+            a2rscore_lagging, _, _ = torch_infer_nonsta_dir(z_acc_indep, z_expr_indep, time)
+            r2ascore_lagging, _, _ = torch_infer_nonsta_dir(z_expr_indep, z_acc_indep, time)
+            a2r_r2a_score_loss =  torch.maximum(a2rscore_lagging-r2ascore_lagging+1e-4, torch.tensor(0))
+
+            self.beta_2 = 5e5
+            self.beta_3 = 1e8
+            self.beta_1 = 1e6
+            nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64)  + self.beta_3 * a2r_r2a_score_loss + \
+            self.beta_2 * a2rscore_coupled_loss + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss
+            reconst_loss = nod_loss * torch.ones_like(reconst_loss)
+            # print("kld_paird loss {}, kld_divergence_acc {}, kld_paired {}"\
+            #     .format(kl_divergence_z.shape, kl_divergence_acc.shape, kld_paired.shape))
+            kl_local_for_warmup = kl_divergence_z + kl_divergence_acc + kld_paired
+            weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
+        
+        elif   self.finetune == 2:  
+
+            z_expr_dep=inference_outputs['z_expr_dep']       
+            z_acc_dep=inference_outputs['z_acc_dep']
+
+            qzm_expr_dep=inference_outputs['qzm_expr_dep']
+            qzv_expr_dep=inference_outputs['qzv_expr_dep']
+            qzm_acc_dep=inference_outputs['qzm_acc_dep']
+            qzv_acc_dep=inference_outputs['qzv_acc_dep']
+
+            # print("loss qzv_acc_dep type: {}".format(type(qzv_acc_dep)) )       
+            ## lagging part 
+            z_expr_indep=inference_outputs['z_expr_indep']
+            z_acc_indep= inference_outputs['z_acc_indep']
+
+            time = inference_outputs['time_key']
+
+            kld_paired = kld(
+            Normal(qzm_expr_dep, qzv_expr_dep.sqrt()), Normal(qzm_acc_dep, qzv_acc_dep.sqrt())) + kld(
+            Normal(qzm_acc_dep, qzv_acc_dep.sqrt()), Normal(qzm_expr_dep, qzv_expr_dep.sqrt()))
+            kld_paired = kld_paired.sum(dim=1)
+
+
+            a2rscore_coupled, _, _ = torch_infer_nonsta_dir(z_acc_dep, z_expr_dep, time)
+            r2ascore_coupled, _, _ = torch_infer_nonsta_dir(z_expr_dep, z_acc_dep, time)
+            self.alpha=0.02
+            a2rscore_coupled_loss = torch.maximum(self.alpha - a2rscore_coupled + 1e-3, torch.tensor(0))
+            r2ascore_coupled_loss = torch.maximum(self.alpha - r2ascore_coupled + 1e-3, torch.tensor(0))
+            a2rscore_lagging, _, _ = torch_infer_nonsta_dir(z_acc_indep, z_expr_indep, time)
+            r2ascore_lagging, _, _ = torch_infer_nonsta_dir(z_expr_indep, z_acc_indep, time)
+            a2r_r2a_score_loss =  torch.maximum(a2rscore_lagging-r2ascore_lagging+1e-4, torch.tensor(0))
+
+            self.beta_2 = 5e5
+            self.beta_3 = 1e8
+            self.beta_1 = 1e6
+            nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64)  + self.beta_3 * a2r_r2a_score_loss + \
+            self.beta_2 * a2rscore_coupled_loss + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss
+            reconst_loss = reconst_loss + nod_loss * torch.ones_like(reconst_loss)
+            kl_local_for_warmup = kl_divergence_z + kl_divergence_acc + kld_paired
+            kl_local_no_warmup = kl_divergence_l
+            weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
 
         loss = torch.mean(reconst_loss + weighted_kl_local)
 

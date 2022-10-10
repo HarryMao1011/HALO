@@ -257,100 +257,36 @@ class HALOVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin, Bas
         for tensors in scdl:
             inference_inputs = self.module._get_inference_input(tensors)
             outputs = self.module.inference(**inference_inputs)
-            # qz_m = outputs[keys["qz_m"]]
-            # qz_v = outputs[keys["qz_v"]]
-            # z = outputs[keys["z"]]
-            
-            ## integrated RNA expression
-            # qzm_expr = outputs[keys["qz_expr_m"]]
-            # qzv_expr = outputs[keys["qz_expr_v"]]
+      
             z_expr = outputs["z"]
-            
-            ## integrated ATAC 
-            # qzm_acc = outputs[keys["qz_acc_m"]]
-            # qzv_acc = outputs[keys["qz_acc_v"]]
+  
             z_acc = outputs["z_acc"]
-            
-            ## dependent RNA
-            # qzm_expr_dep = outputs[keys["qzm_expr_dep"]]
-            # qzv_expr_dep = outputs[keys["qzv_expr_dep"]]
-            # print("loss qzv_expr_dep type {}".format(type(qzv_expr_dep)))
-            # z_expr_dep = outputs[keys["z_expr_dep"]]
-            
-            ## dependent ATAC
-            # z_acc_dep=outputs[keys["z_acc_dep"]]
-            # qzm_acc_dep=outputs[keys['qzm_acc_dep']]
-            # qzv_acc_dep=outputs[keys['qzv_acc_dep']]
 
-            # ## independent RNA
-            # z_expr_indep=outputs[keys["z_expr_indep"]]
-            # qzm_expr_indep=outputs[keys['qzm_expr_indep']]
-            # qzv_expr_indep=outputs[keys['qzv_expr_indep']]
+            z_expr_indep=outputs["z_expr_indep"]
+            z_expr_dep = outputs["z_expr_dep"]
+
 
             ## independent ATAC
-            # z_acc_indep=outputs[keys["z_acc_indep"]]
-            # qzm_acc_indep=outputs[keys['qzm_acc_indep']]
-            # qzv_acc_indep=outputs[keys['qzv_acc_indep']]
-
-            # time_keys = outputs['time_key']
+            z_acc_indep=outputs["z_acc_indep"]
+            z_acc_dep=outputs["z_acc_dep"]
 
 
-            # if give_mean:
-            #     # does each model need to have this latent distribution param?
-            #     if self.module.latent_distribution == "ln":
-            #         # samples = Normal(qz_m, qz_v.sqrt()).sample([1])
-            #         # z = torch.nn.functional.softmax(samples, dim=-1)
-            #         # z = z.mean(dim=0)
+            time_keys = outputs['time_key']
 
-            #         samples_expr = Normal(qzm_expr, qzv_expr.sqrt()).sample([1])
-            #         z_expr = torch.nn.functional.softmax(samples_expr, dim=-1)
-            #         z_expr = z_expr.mean(dim=0)
-
-            #         samples_atac = Normal(qzm_acc, qzv_acc.sqrt()).sample([1])
-            #         z_acc = torch.nn.functional.softmax(samples_atac, dim=-1)
-            #         z_acc = z_acc.mean(dim=0)
-
-            #         sample_atac_indep =  Normal(qzm_acc_indep, qzv_acc_indep.sqrt()).sample([1])
-            #         z_acc_indep = torch.nn.functional.softmax(sample_atac_indep, dim=-1)
-            #         z_acc_indep = z_acc_indep.mean(dim=0)
-
-            #         sample_expr_indep =  Normal(qzm_expr_indep, qzv_expr_indep.sqrt()).sample([1])
-            #         z_expr_indep = torch.nn.functional.softmax(sample_expr_indep, dim=-1)
-            #         z_expr_indep = z_expr_indep.mean(dim=0)
-
-            #         sample_atac_dep =  Normal(qzm_acc_dep, qzv_acc_dep.sqrt()).sample([1])
-            #         z_acc_dep = torch.nn.functional.softmax(sample_atac_dep, dim=-1)
-            #         z_acc_dep = z_acc_dep.mean(dim=0)
-
-            #         sample_expr_dep =  Normal(qzm_expr_dep, qzv_expr_dep.sqrt()).sample([1])
-            #         z_expr_indep = torch.nn.functional.softmax(sample_expr_dep, dim=-1)
-            #         z_expr_indep = z_expr_indep.mean(dim=0)
-
-
-            #     else:
-            #         z_acc = qzm_acc
-            #         z_expr = qzm_expr
-            #         z_acc_indep = qzm_acc_indep
-            #         z_expr_indep = qzm_expr_indep
-            #         z_acc_dep = qzm_acc_dep
-            #         z_expr_dep = qzm_expr_dep
-
-            
             # latent += [z.cpu()]
             latent_atac+= [z_acc.cpu()]
             latent_expr += [z_expr.cpu()]
 
-            # latent_atac_dep+= [z_acc_dep.cpu()]
-            # latent_expr_dep += [z_expr_dep.cpu()]          
+            latent_atac_dep+= [z_acc_dep.cpu()]
+            latent_expr_dep += [z_expr_dep.cpu()]          
 
-            # latent_atac_indep+= [z_acc_indep.cpu()]
-            # latent_expr_indep += [z_expr_indep.cpu()]
-            # times += [time_keys.cpu()]
+            latent_atac_indep+= [z_acc_indep.cpu()]
+            latent_expr_indep += [z_expr_indep.cpu()]
+            times += [time_keys.cpu()]
 
 
 
-        return  torch.cat(latent_expr).numpy(), torch.cat(latent_atac).numpy()
-        # , \
-        #     torch.cat(latent_atac_dep).numpy(), torch.cat(latent_expr_dep).numpy(), \
-        #         torch.cat(latent_atac_indep).numpy(), torch.cat(latent_expr_indep).numpy(), torch.cat(times).numpy()
+        return  torch.cat(latent_expr).numpy(), torch.cat(latent_atac).numpy(), \
+            torch.cat(latent_expr_dep).numpy(), torch.cat(latent_atac_dep).numpy(), \
+                torch.cat(latent_expr_indep).numpy(), torch.cat(latent_atac_indep).numpy(), torch.cat(times).numpy()
       
