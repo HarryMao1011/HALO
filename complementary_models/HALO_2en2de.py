@@ -287,11 +287,20 @@ class HALOVAECAT3(MULTIVAE):
     ) -> Dict[str, torch.Tensor]:
 
         # Get Data and Additional Covs
-        x_rna = x[:, : self.n_input_genes]
-        x_chr = x[:, self.n_input_genes :]
+        if self.n_input_genes == 0:
+            x_rna = torch.zeros(x.shape[0], 1, device=x.device, requires_grad=False)
+        else:
+            x_rna = x[:, : self.n_input_genes]
+            x_rna = torch.log(1 + x_rna)
+
+        if self.n_input_regions == 0:
+            x_chr = torch.zeros(x.shape[0], 1, device=x.device, requires_grad=False)
+        else:
+            x_chr = x[:, self.n_input_genes :]
+
         device= 'cuda' if torch.cuda.is_available() else "cpu"
-        x_rna_2 = x_rna.clone().detach().requires_grad_(True).to(device)
-        x_chr_2 =  x_chr.clone().detach().requires_grad_(True).to(device)
+        # x_rna_2 = x_rna.clone().detach().requires_grad_(True).to(device)
+        # x_chr_2 =  x_chr.clone().detach().requires_grad_(True).to(device)
 
         mask_expr = x_rna.sum(dim=1) > 0
         mask_acc = x_chr.sum(dim=1) > 0
@@ -303,12 +312,12 @@ class HALOVAECAT3(MULTIVAE):
             encoder_input_expression = x_rna
             encoder_input_accessibility = x_chr
 
-        if cont_covs is not None and self.encode_covariates:
-            encoder_input_expression_2 = torch.cat((x_rna_2, cont_covs), dim=-1)
-            encoder_input_accessibility_2 = torch.cat((x_chr_2, cont_covs), dim=-1)
-        else:
-            encoder_input_expression_2 = x_rna_2
-            encoder_input_accessibility_2 = x_chr_2    
+        # if cont_covs is not None and self.encode_covariates:
+        #     encoder_input_expression_2 = torch.cat((x_rna_2, cont_covs), dim=-1)
+        #     encoder_input_accessibility_2 = torch.cat((x_chr_2, cont_covs), dim=-1)
+        # else:
+        #     encoder_input_expression_2 = x_rna_2
+        #     encoder_input_accessibility_2 = x_chr_2    
 
         if cat_covs is not None and self.encode_covariates:
             categorical_input = torch.split(cat_covs, 1, dim=1)
@@ -322,20 +331,28 @@ class HALOVAECAT3(MULTIVAE):
         qz_expr, z_expr = self.z_encoder_expression(
             encoder_input_expression, batch_index, *categorical_input
         )
+        
+        print("qz_expr: {}".format(qz_expr))
+        print("qz_expr: {}".format(qz_expr))
+
+        
+        
         qzm_acc = qz_acc.loc
         qzm_expr = qz_expr.loc
         qzv_acc = qz_acc.scale**2
         qzv_expr = qz_expr.scale**2
-
+        # print("qzm_acc shape {},  qzv_acc shape {}".format(qzm_acc.shape, qzv_acc.shape))
         qzm_acc_dep = qzm_acc[:, :self.n_latent_dep]
         qzm_expr_dep = qzm_expr[:, :self.n_latent_dep]
         qzv_acc_dep = qzv_acc[:, :self.n_latent_dep]
         qzv_expr_dep = qzv_expr[:, :self.n_latent_dep]
+        # print("qzv_expr_dep shape {},  qzm_expr_dep shape {}".format(qzv_expr_dep.shape, qzm_expr_dep.shape))
 
         qzm_acc_indep = qzm_acc[:, self.n_latent_dep:]
         qzm_expr_indep = qzm_expr[:, self.n_latent_dep:]
         qzv_acc_indep = qzv_acc[:, self.n_latent_dep:]
         qzv_expr_indep = qzv_expr[:, self.n_latent_dep:]
+        # print("qzv_expr_indep shape {},  qzm_expr_indep shape {}".format(qzv_expr_indep.shape, qzm_expr_indep.shape))
 
        # Z Encoders for independent (time-lagging)
 
@@ -377,7 +394,6 @@ class HALOVAECAT3(MULTIVAE):
 
         z_acc_dep = z_expr[:, :self.n_latent_dep]
         z_acc_indep = z_expr[:, self.n_latent_dep:]
-
 
 
         outputs = dict(
@@ -586,8 +602,10 @@ class HALOVAECAT3(MULTIVAE):
         )
 
         # mix losses to get the correct loss for each cell
+        weight_atac = 0
+        weight_rna = 1
         recon_loss = self._mix_modalities(
-            rl_accessibility + rl_expression,  # paired
+            weight_atac *rl_accessibility + weight_rna * rl_expression,  # paired
             rl_expression,  # expression
             rl_accessibility,  # accessibility
             mask_expr,
@@ -619,18 +637,23 @@ class HALOVAECAT3(MULTIVAE):
         qzv_acc_indep= inference_outputs ['qzv_acc_indep']
         time = inference_outputs['time_key']
 
-        kl_div_z = 100* kld(
+        expr_weight = 1
+        atac_weight = 0
+        kl_div_z = expr_weight * kld(
             Normal(qzm_expr, torch.sqrt(qzv_expr)), Normal(0, 1)
-        ) + 100 *kld(
+        ) + atac_weight *kld(
             Normal(qzm_acc, torch.sqrt(qzv_acc)), Normal(0, 1)
         )
 
-        kld_paired = kld(
+        expr_weight_p = 0
+        atac_weight_p = 0
+        
+        kld_paired = expr_weight_p * kld(
             Normal(qzm_expr_dep, qzv_expr_dep.sqrt()), Normal(qzm_acc_dep, qzv_acc_dep.sqrt())
-        ) + 100*kld(
+        ) + atac_weight_p*kld(
             Normal(qzm_acc_dep, qzv_acc_dep.sqrt()), Normal(qzm_expr_dep, qzv_expr_dep.sqrt()))
 
-        kld_paired = torch.cat([kld_paired, torch.zeros_like(qzm_acc_indep, dtype=torch.float64).to(device)], axis=-1) 
+        kld_paired = 0 *torch.cat([kld_paired, torch.zeros_like(qzm_acc_indep, dtype=torch.float64).to(device)], axis=-1) 
         # print(kld_paired.shape, kl_div_z.shape)    
         # )  - kld(Normal(qzm_acc_dep, qzv_acc_dep.sqrt()), Normal(qzm_acc_indep, qzv_acc_indep.sqrt()))\
         #     - kld(Normal(qzm_acc_indep, qzv_acc_indep.sqrt()), Normal(qzm_acc_dep, qzv_acc_dep.sqrt())) \
@@ -640,53 +663,58 @@ class HALOVAECAT3(MULTIVAE):
         ## scores of coupled modalities should be both greater or equal than \alpha
         # print("shapes are {}".format(z_acc_dep.shape, z_expr_dep.shape))
         # print(z_acc_dep.get_device(), z_expr_dep.get_device(), time.get_device())
-        a2rscore_coupled, _, _ = torch_infer_nonsta_dir(z_acc_dep, z_expr_dep, time)
-        r2ascore_coupled, _, _ = torch_infer_nonsta_dir(z_expr_dep, z_acc_dep, time)
         
-        # print("coupled  ATAC->RNA {}, RNA->ATAC {}".format(a2rscore_coupled, r2ascore_coupled))
-        self.alpha=0.01
-
-        a2rscore_coupled_loss = torch.maximum(self.alpha - a2rscore_coupled + 1e-3, torch.tensor(0))
-        r2ascore_coupled_loss = torch.maximum(self.alpha - r2ascore_coupled + 1e-3, torch.tensor(0))
-
-        # a2rscore_coupled_loss = -self.beta_1 *  a2rscore_coupled 
-        # r2ascore_coupled_loss = -self.beta_1 *  r2ascore_coupled 
-
-        # print("coupled loss {}, {}". format(a2rscore_coupled_loss, r2ascore_coupled_loss))
-
-        
-        ## calculate the lagging (cd-nod nonstationary condtions) constrains
-
-        ## scores of lagging modalities (ATAC --> RNA) should be smaller than \alpha
-        # z_acc_indep = torch.tensor(z_acc_indep)
-        # z_expr_indep = torch.tensor(z_expr_indep)
-        
-
-        a2rscore_lagging, _, _ = torch_infer_nonsta_dir(z_acc_indep, z_expr_indep, time)
-        r2ascore_lagging, _, _ = torch_infer_nonsta_dir(z_expr_indep, z_acc_indep, time)
-        a2r_r2a_score_loss =  torch.maximum(a2rscore_lagging-r2ascore_lagging+1e-4, torch.tensor(0))
-
-        # print("Lagging ATAC->RNA score {}, RNA->ATAC {}". format(a2rscore_lagging, r2ascore_lagging))
-        # print("a2r_r2a_score_loss loss {}".format(a2r_r2a_score_loss))
-
-
-        ## non_stationary loss
-        # print("a2rscore_coupled_loss type {} /n,r2ascore_coupled_loss type ".format(type(a2rscore_coupled_loss), ))
-        # print("a2rscore_coupled_loss: {} , r2ascore_coupled_loss: {} /n a2rscore_lagging_loss: {},  a2r_r2a_score_loss: {}"\
-            # .format(a2rscore_coupled_loss, r2ascore_coupled_loss, a2rscore_lagging_loss, a2r_r2a_score_loss))
-        # print("independent distance ATAC-RNA {}".format(a2rscore_lagging-r2ascore_lagging))
-
-        # nod_loss = -1 *self.beta_1 *(-1 * a2rscore_coupled.to(torch.float64) -1 * r2ascore_coupled.to(torch.float64) \
-        #     -  r2ascore_coupled.to(torch.float64) +  a2rscore_lagging.to(torch.float64)\
-        #     + a2r_r2a_score_loss.to(torch.float64))
-
         nod_weight = 0
+        nod_loss = 0
+        if nod_weight != 0:
+        
+            a2rscore_coupled, _, _ = torch_infer_nonsta_dir(z_acc_dep, z_expr_dep, time)
+            r2ascore_coupled, _, _ = torch_infer_nonsta_dir(z_expr_dep, z_acc_dep, time)
+            
+            # print("coupled  ATAC->RNA {}, RNA->ATAC {}".format(a2rscore_coupled, r2ascore_coupled))
+            self.alpha=0.01
 
-        self.beta_2 = 5e5
-        self.beta_3 = 1e8
-        self.beta_1 = 1e6
-        nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64)  + self.beta_3 * a2r_r2a_score_loss + \
-        self.beta_2 * a2rscore_coupled_loss + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss
+            a2rscore_coupled_loss = torch.maximum(self.alpha - a2rscore_coupled + 1e-3, torch.tensor(0))
+            r2ascore_coupled_loss = torch.maximum(self.alpha - r2ascore_coupled + 1e-3, torch.tensor(0))
+
+            # a2rscore_coupled_loss = -self.beta_1 *  a2rscore_coupled 
+            # r2ascore_coupled_loss = -self.beta_1 *  r2ascore_coupled 
+
+            # print("coupled loss {}, {}". format(a2rscore_coupled_loss, r2ascore_coupled_loss))
+
+            
+            ## calculate the lagging (cd-nod nonstationary condtions) constrains
+
+            ## scores of lagging modalities (ATAC --> RNA) should be smaller than \alpha
+            # z_acc_indep = torch.tensor(z_acc_indep)
+            # z_expr_indep = torch.tensor(z_expr_indep)
+            
+
+            a2rscore_lagging, _, _ = torch_infer_nonsta_dir(z_acc_indep, z_expr_indep, time)
+            r2ascore_lagging, _, _ = torch_infer_nonsta_dir(z_expr_indep, z_acc_indep, time)
+            a2r_r2a_score_loss =  torch.maximum(a2rscore_lagging-r2ascore_lagging+1e-4, torch.tensor(0))
+
+            # print("Lagging ATAC->RNA score {}, RNA->ATAC {}". format(a2rscore_lagging, r2ascore_lagging))
+            # print("a2r_r2a_score_loss loss {}".format(a2r_r2a_score_loss))
+
+
+            ## non_stationary loss
+            # print("a2rscore_coupled_loss type {} /n,r2ascore_coupled_loss type ".format(type(a2rscore_coupled_loss), ))
+            # print("a2rscore_coupled_loss: {} , r2ascore_coupled_loss: {} /n a2rscore_lagging_loss: {},  a2r_r2a_score_loss: {}"\
+                # .format(a2rscore_coupled_loss, r2ascore_coupled_loss, a2rscore_lagging_loss, a2r_r2a_score_loss))
+            # print("independent distance ATAC-RNA {}".format(a2rscore_lagging-r2ascore_lagging))
+
+            # nod_loss = -1 *self.beta_1 *(-1 * a2rscore_coupled.to(torch.float64) -1 * r2ascore_coupled.to(torch.float64) \
+            #     -  r2ascore_coupled.to(torch.float64) +  a2rscore_lagging.to(torch.float64)\
+            #     + a2r_r2a_score_loss.to(torch.float64))
+
+            nod_weight = 0
+
+            self.beta_2 = 5e5
+            self.beta_3 = 1e8
+            self.beta_1 = 1e6
+            nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64)  + self.beta_3 * a2r_r2a_score_loss + \
+            self.beta_2 * a2rscore_coupled_loss + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss
 
         # nod_loss =  nod_loss - self.beta_2 * r2ascore_lagging.to(torch.float64)-self.beta_2 * a2rscore_coupled.to(torch.float64) -self.beta_2*r2ascore_coupled
 
@@ -713,7 +741,7 @@ class HALOVAECAT3(MULTIVAE):
         # print(type(nod_loss))
         weight = 1
         recon_loss = weight* recon_loss + nod_weight *nod_loss * torch.ones_like(recon_loss)
-        print("n_indep: {} after reconstructon loss {}, beta:{}".format(self.n_latent_indep, recon_loss.mean(), self.beta_1))
+        # print("n_indep: {} after reconstructon loss {}, beta:{}".format(self.n_latent_indep, recon_loss.mean(), self.beta_1))
 
         # PENALTY
         # distance_penalty = kl_weight * torch.pow(z_acc - z_expr, 2).sum(dim=1)

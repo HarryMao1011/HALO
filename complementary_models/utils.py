@@ -118,4 +118,4 @@ def torch_infer_nonsta_dir(X, Y, c_indx, width=0.1, IF_GP=False, device='cuda'):
 
 
     return testStat, Mg, Mg2
-        
+
