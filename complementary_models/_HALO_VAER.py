@@ -132,7 +132,13 @@ class HALOVAER(BaseModuleClass):
         var_activation: Optional[Callable] = None,
         expr_train: Optional[bool] = True,
         acc_train: Optional[bool] = False,
-        finetune: Optional[int] = 0
+        finetune: Optional[int] = 0,
+        alpha: Optional[float] = 0.002,
+        beta1: Optional[float] = 1e5,
+        beta2: Optional[float] = 1e4,
+        beta3: Optional[float] = 1e5,
+
+
     ):
         super().__init__()
     
@@ -150,6 +156,11 @@ class HALOVAER(BaseModuleClass):
         # Automatically deactivate if useless
         self.n_batch = n_batch
         self.n_labels = n_labels
+
+        self.beta_2 = 5e5
+        self.beta_3 = 1e8
+        self.beta_1 = 1e6
+        self.alpha = alpha
 
         self.latent_distribution = latent_distribution
         self.encode_covariates = encode_covariates
@@ -175,7 +186,11 @@ class HALOVAER(BaseModuleClass):
         if self.expr_train and self.acc_train:
             self.both = True
         self.finetune = finetune    
-        
+        self.alpha = alpha
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.beta3 = beta3
+
         if not self.use_observed_lib_size:
             if library_log_means is None or library_log_means is None:
                 raise ValueError(
@@ -659,6 +674,14 @@ class HALOVAER(BaseModuleClass):
         """
         self.finetune = finetune
 
+    def set_scale_params(self, beta1, beta2, beta3, alpha=0.0002):
+        self.beta_1 = beta1
+        self.beta_2 = beta2
+        self.beta_3 = beta3
+        self.alpha = alpha
+
+
+
     def loss(
         self,
         tensors,
@@ -710,6 +733,22 @@ class HALOVAER(BaseModuleClass):
         reconst_loss = 0
         weighted_kl_local = 0
 
+        # qzm_expr_dep=inference_outputs['qzm_expr_dep']
+        # qzv_expr_dep=inference_outputs['qzv_expr_dep']
+        # qzm_acc_dep=inference_outputs['qzm_acc_dep']
+        # qzv_acc_dep=inference_outputs['qzv_acc_dep']
+
+        # # print("loss qzv_acc_dep type: {}".format(type(qzv_acc_dep)) )       
+        # ## lagging part 
+        # z_expr_indep=inference_outputs['z_expr_indep']
+        # z_acc_indep= inference_outputs['z_acc_indep']
+
+        # time = inference_outputs['time_key']
+        # print("time : {}".format(time))
+
+        # print("qzm_expr_dep {}, qzv_expr_dep {}, qzm_acc_dep {}, qzv_acc_dep {}".format(qzm_expr_dep, qzv_expr_dep, qzm_acc_dep, qzv_acc_dep))
+
+
 
 
         if self.expr_train and not self.acc_train:
@@ -755,12 +794,14 @@ class HALOVAER(BaseModuleClass):
 
             a2rscore_coupled, _, _ = torch_infer_nonsta_dir(z_acc_dep, z_expr_dep, time)
             r2ascore_coupled, _, _ = torch_infer_nonsta_dir(z_expr_dep, z_acc_dep, time)
-            self.alpha=0.02
+            self.alpha=0.002
             a2rscore_coupled_loss = torch.maximum(self.alpha - a2rscore_coupled + 1e-3, torch.tensor(0))
             r2ascore_coupled_loss = torch.maximum(self.alpha - r2ascore_coupled + 1e-3, torch.tensor(0))
             a2rscore_lagging, _, _ = torch_infer_nonsta_dir(z_acc_indep, z_expr_indep, time)
             r2ascore_lagging, _, _ = torch_infer_nonsta_dir(z_expr_indep, z_acc_indep, time)
             a2r_r2a_score_loss =  torch.maximum(a2rscore_lagging-r2ascore_lagging+1e-4, torch.tensor(0))
+
+            # print(a2rscore_coupled, r2ascore_coupled, a2rscore_lagging, r2ascore_lagging)
 
             self.beta_2 = 5e5
             self.beta_3 = 1e8
@@ -772,6 +813,8 @@ class HALOVAER(BaseModuleClass):
             #     .format(kl_divergence_z.shape, kl_divergence_acc.shape, kld_paired.shape))
             kl_local_for_warmup = kl_divergence_z + kl_divergence_acc + kld_paired
             weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
+            # print("nod_loss {}".format(nod_loss))
+
         
         elif   self.finetune == 2:  
 
@@ -789,6 +832,9 @@ class HALOVAER(BaseModuleClass):
             z_acc_indep= inference_outputs['z_acc_indep']
 
             time = inference_outputs['time_key']
+            # print("time : {}".format(time))
+
+            # print("qzm_expr_dep {}, qzv_expr_dep {}, qzm_acc_dep {}, qzv_acc_dep {}".format(qzm_expr_dep, qzv_expr_dep, qzm_acc_dep, qzv_acc_dep))
 
             kld_paired = kld(
             Normal(qzm_expr_dep, qzv_expr_dep.sqrt()), Normal(qzm_acc_dep, qzv_acc_dep.sqrt())) + kld(
@@ -814,7 +860,11 @@ class HALOVAER(BaseModuleClass):
             kl_local_for_warmup = kl_divergence_z + kl_divergence_acc + kld_paired
             kl_local_no_warmup = kl_divergence_l
             weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
+            # print(" \n a2rscore_coupled {}, r2ascore_coupled {}, a2rscore_lagging {}, r2ascore_lagging {}".format(
+            #     a2rscore_coupled, r2ascore_coupled, a2rscore_lagging, r2ascore_lagging))
 
+            # print("nod_loss {}".format(nod_loss))
+        
         loss = torch.mean(reconst_loss + weighted_kl_local)
 
         kl_local = dict(
