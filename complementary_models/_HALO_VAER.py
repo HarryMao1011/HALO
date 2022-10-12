@@ -343,6 +343,7 @@ class HALOVAER(BaseModuleClass):
         """
         
         z = inference_outputs["z"]
+        qz = inference_outputs["qz"]
         library = inference_outputs["library"]
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
         y = tensors[REGISTRY_KEYS.LABELS_KEY]
@@ -377,6 +378,7 @@ class HALOVAER(BaseModuleClass):
 
         input_dict = dict(
             z=z,
+            qz = qz,
             library=library,
             batch_index=batch_index,
             y=y,
@@ -546,6 +548,7 @@ class HALOVAER(BaseModuleClass):
     def generative(
         self,
         z,
+        qz,
         library,
         batch_index,
 
@@ -558,10 +561,14 @@ class HALOVAER(BaseModuleClass):
         size_factor=None,
         y=None,
         transform_batch=None,
+        use_z_mean = False
     ):
         """Runs the generative model."""
         # TODO: refactor forward function to not rely on y
         # Likelihood distribution
+        if use_z_mean:
+            z = qz.loc
+        
         if cont_covs is None:
             decoder_input = z
         elif z.dim() != cont_covs.dim():
@@ -575,6 +582,8 @@ class HALOVAER(BaseModuleClass):
             categorical_input = torch.split(cat_covs, 1, dim=1)
         else:
             categorical_input = tuple()
+        # if use_z_mean:
+        #     z = qz.loc
 
         if transform_batch is not None:
             batch_index = torch.ones_like(batch_index) * transform_batch
@@ -656,7 +665,8 @@ class HALOVAER(BaseModuleClass):
             px=px,
             pl=pl,
             pz=pz,
-            pa = pa
+            pa = pa,
+            px_scale = px_scale
         )
     def set_train_params(self, expr_train, acc_train):
 

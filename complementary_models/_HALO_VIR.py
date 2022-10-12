@@ -78,9 +78,10 @@ class HALOVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin, Bas
             library_log_means, library_log_vars = _init_library_size(
                 self.adata_manager, n_batch
             )
-        print("n_genes :{}".format(n_genes))
         # n_input = self.summary_stats.n_vars
         n_labels = self.summary_stats.n_labels
+        self.n_genes = n_genes
+        self.n_regions = n_regions
         # print("n_input {}, n_labels {}".format(n_input, n_labels))
         self.module = HALOVAER(
             n_input_genes=n_genes,
