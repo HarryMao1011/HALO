@@ -14,3 +14,5 @@ from ._HALO_VIR import HALOVIR
 from .data_utils import _get_latent_adata_type
 from ._HALO_LDVAER import HALOLDVAER
 from ._HALO_LDVIR import HALOLDVIR
+from ._HALO_MASK_VAE import HALOMASKVAE
+from ._HALO_MASK_VIR import HALOMASKVIR

@@ -19,7 +19,10 @@ from scvi._compat import Literal
 from scvi.distributions import NegativeBinomial, Poisson, ZeroInflatedNegativeBinomial
 from scvi.module.base import  LossRecorder, auto_move_data, BaseModuleClass
 from scvi.nn import DecoderSCVI, Encoder, LinearDecoderSCVI, one_hot
+from scvi.module._peakvae import GateDecoder 
 from scvi.module._peakvae import Decoder as DecoderPeakVI
+
+
 
 from scvi.module import VAE 
 from torch.distributions import kl_divergence as kld
@@ -28,8 +31,9 @@ from .utils import torch_infer_nonsta_dir
 torch.backends.cudnn.benchmark = True
 
 
+
 # HALOVAER model
-class HALOVAER(BaseModuleClass):
+class HALOMASKVAE(BaseModuleClass):
     """
     Variational auto-encoder model.
 
@@ -137,6 +141,7 @@ class HALOVAER(BaseModuleClass):
         beta1: Optional[float] = 1e5,
         beta2: Optional[float] = 1e4,
         beta3: Optional[float] = 1e5,
+        gates_finetune:Optional[bool] = False
 
 
     ):
@@ -164,6 +169,7 @@ class HALOVAER(BaseModuleClass):
 
         self.latent_distribution = latent_distribution
         self.encode_covariates = encode_covariates
+        self.gates_finetune = gates_finetune
 
         ##### add hidden_common numbers
         self.n_hidden_common = (
@@ -185,7 +191,7 @@ class HALOVAER(BaseModuleClass):
         self.both_train = False
         if self.expr_train and self.acc_train:
             self.both = True
-        self.finetune = finetune    
+        self.finetune = gates_finetune    
         self.alpha = alpha
         self.beta1 = beta1
         self.beta2 = beta2
@@ -224,8 +230,7 @@ class HALOVAER(BaseModuleClass):
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
         use_layer_norm_encoder = use_layer_norm == "encoder" or use_layer_norm == "both"
         use_layer_norm_decoder = use_layer_norm == "decoder" or use_layer_norm == "both"
-
-
+        self.use_batch_norm_linear = use_batch_norm_decoder
         # z encoder goes from the n_input-dimensional data to an n_latent-d
         # latent space representation
         n_input_encoder = n_input_genes + n_continuous_cov * encode_covariates
@@ -264,19 +269,20 @@ class HALOVAER(BaseModuleClass):
             use_layer_norm=use_layer_norm_encoder,
             return_dist=True,
         )
-
-        self.z_decoder_accessibility = DecoderPeakVI(
+   
+        self.z_decoder_accessibility = GateDecoder(
             n_input=self.n_latent + n_continuous_cov,
             n_output=n_input_regions,
-            n_hidden=self.n_hidden_common,
+            n_hidden_global=self.n_hidden_common,
             n_cat_list=cat_list,
             n_layers=self.n_layers_decoder,
             use_batch_norm=use_batch_norm_decoder,
             use_layer_norm=use_layer_norm_decoder,
-            deep_inject_covariates=deeply_inject_covariates
+            deep_inject_covariates=deeply_inject_covariates,
+            fine_tune = self.gates_finetune
         )
 
-
+        
         # l encoder goes from n_input-dimensional data to 1-d library size
         self.l_encoder = Encoder(
             n_input_encoder,
@@ -307,17 +313,45 @@ class HALOVAER(BaseModuleClass):
 
         # decoder goes from n_latent-dimensional space to n_input-d data
         n_input_decoder = n_latent + n_continuous_cov
-        self.decoder = DecoderSCVI(
+        # self.decoder = DecoderSCVI(
+        #     n_input_decoder,
+        #     n_input_genes,
+        #     n_cat_list=cat_list,
+        #     n_layers=n_layers,
+        #     n_hidden=n_hidden,
+        #     inject_covariates=deeply_inject_covariates,
+        #     use_batch_norm=use_batch_norm_decoder,
+        #     use_layer_norm=use_layer_norm_decoder,
+        #     scale_activation="softplus" if use_size_factor_key else "softmax",
+        # )
+
+        self.decoder = LinearDecoderSCVI(
             n_input_decoder,
             n_input_genes,
             n_cat_list=cat_list,
-            n_layers=n_layers,
-            n_hidden=n_hidden,
-            inject_covariates=deeply_inject_covariates,
             use_batch_norm=use_batch_norm_decoder,
-            use_layer_norm=use_layer_norm_decoder,
-            scale_activation="softplus" if use_size_factor_key else "softmax",
+            bias=True,
         )
+
+    @torch.no_grad()
+    def get_loadings(self) -> np.ndarray:
+        """Extract per-gene weights (for each Z, shape is genes by dim(Z)) in the linear decoder."""
+        # This is BW, where B is diag(b) batch norm, W is weight matrix
+        if self.use_batch_norm_linear is True:
+            w = self.decoder.factor_regressor.fc_layers[0][0].weight
+            bn = self.decoder.factor_regressor.fc_layers[0][1]
+            sigma = torch.sqrt(bn.running_var + bn.eps)
+            gamma = bn.weight
+            b = gamma / sigma
+            bI = torch.diag(b)
+            loadings = torch.matmul(bI, w)
+        else:
+            loadings = self.decoder.factor_regressor.fc_layers[0][0].weight
+        loadings = loadings.detach().cpu().numpy()
+        if self.n_batch > 1:
+            loadings = loadings[:, : -self.n_batch]
+
+        return loadings    
 
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
@@ -341,9 +375,44 @@ class HALOVAER(BaseModuleClass):
         RNA generative input
         
         """
-        
+        # if self.gates_finetune:
+        #     with torch.no_grad():
+        #         z = inference_outputs["z"]
+        #         library = inference_outputs["library"]
+        #         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
+        #         y = tensors[REGISTRY_KEYS.LABELS_KEY]
+                
+
+        #         cont_key = REGISTRY_KEYS.CONT_COVS_KEY
+        #         cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
+
+        #         cat_key = REGISTRY_KEYS.CAT_COVS_KEY
+        #         cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
+
+
+        #         size_factor_key = REGISTRY_KEYS.SIZE_FACTOR_KEY
+        #         size_factor = (
+        #             torch.log(tensors[size_factor_key])
+        #             if size_factor_key in tensors.keys()
+        #             else None
+        #         )
+
+        #         """
+                
+        #         ATAC genreative input
+                
+                
+        #         """
+        #         z_acc = inference_outputs["z_acc"]
+
+        #         qz_acc = inference_outputs["qz_acc"]
+
+        #         libsize_acc = inference_outputs["libsize_acc"]
+
+
+        # else:
+
         z = inference_outputs["z"]
-        qz = inference_outputs["qz"]
         library = inference_outputs["library"]
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
         y = tensors[REGISTRY_KEYS.LABELS_KEY]
@@ -378,7 +447,6 @@ class HALOVAER(BaseModuleClass):
 
         input_dict = dict(
             z=z,
-            qz = qz,
             library=library,
             batch_index=batch_index,
             y=y,
@@ -462,6 +530,36 @@ class HALOVAER(BaseModuleClass):
         ATAC inference part
         
         """
+        # if self.gates_finetune:
+        #     with torch.no_grad():
+        #         if cont_covs is not None and self.encode_covariates:
+        #             encoder_input_accessibility = torch.cat((x_chr, cont_covs), dim=-1)
+        #         else:
+        #             encoder_input_accessibility = x_chr
+
+
+        #         if cat_covs is not None and self.encode_covariates:
+        #             categorical_input = torch.split(cat_covs, 1, dim=1)
+        #         else:
+        #             categorical_input = tuple()
+
+        #         libsize_acc = self.l_encoder_accessibility(
+        #             encoder_input_accessibility, batch_index, *categorical_input
+        #         )
+
+        #         qz_acc, z_acc = self.z_encoder_accessibility(
+        #             encoder_input_accessibility, batch_index, *categorical_input
+        #         )
+
+        #         if n_samples > 1:
+        #             untran_za = qz_acc.sample((n_samples,))
+        #             z_acc = self.z_encoder_accessibility.z_transformation(untran_za)
+        #             libsize_acc = libsize_acc.unsqueeze(0).expand(
+        #                 (n_samples, libsize_acc.size(0), libsize_acc.size(1))
+        #             )
+
+        # else:
+
         if cont_covs is not None and self.encode_covariates:
             encoder_input_accessibility = torch.cat((x_chr, cont_covs), dim=-1)
         else:
@@ -480,8 +578,6 @@ class HALOVAER(BaseModuleClass):
         qz_acc, z_acc = self.z_encoder_accessibility(
             encoder_input_accessibility, batch_index, *categorical_input
         )
-
-
 
         if n_samples > 1:
             untran_za = qz_acc.sample((n_samples,))
@@ -548,7 +644,6 @@ class HALOVAER(BaseModuleClass):
     def generative(
         self,
         z,
-        qz,
         library,
         batch_index,
 
@@ -561,14 +656,10 @@ class HALOVAER(BaseModuleClass):
         size_factor=None,
         y=None,
         transform_batch=None,
-        use_z_mean = False
     ):
         """Runs the generative model."""
         # TODO: refactor forward function to not rely on y
         # Likelihood distribution
-        if use_z_mean:
-            z = qz.loc
-        
         if cont_covs is None:
             decoder_input = z
         elif z.dim() != cont_covs.dim():
@@ -582,8 +673,6 @@ class HALOVAER(BaseModuleClass):
             categorical_input = torch.split(cat_covs, 1, dim=1)
         else:
             categorical_input = tuple()
-        # if use_z_mean:
-        #     z = qz.loc
 
         if transform_batch is not None:
             batch_index = torch.ones_like(batch_index) * transform_batch
@@ -665,9 +754,14 @@ class HALOVAER(BaseModuleClass):
             px=px,
             pl=pl,
             pz=pz,
-            pa = pa,
-            px_scale = px_scale
+            pa = pa
         )
+
+    def set_gates_finetune(self, gatesfine):
+        self.gates_finetune = gatesfine
+        ## set the gates finetune parameters
+        self.z_decoder_accessibility.set_finetune(gatesfine)
+
     def set_train_params(self, expr_train, acc_train):
 
         self.expr_train = expr_train
@@ -759,6 +853,8 @@ class HALOVAER(BaseModuleClass):
         # print("qzm_expr_dep {}, qzv_expr_dep {}, qzm_acc_dep {}, qzv_acc_dep {}".format(qzm_expr_dep, qzv_expr_dep, qzm_acc_dep, qzv_acc_dep))
 
 
+
+
         if self.expr_train and not self.acc_train:
         ### RNA only
             reconst_loss = -generative_outputs["px"].log_prob(x).sum(-1)
@@ -768,16 +864,34 @@ class HALOVAER(BaseModuleClass):
             weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
 
         elif  not self.expr_train and  self.acc_train:
+
             reconst_loss = rl_accessibility
             # print("ATAC reconst_losss shape {}".format(reconst_loss.shape))
             kl_local_for_warmup = kl_divergence_acc
-            weighted_kl_local = kl_weight * kl_local_for_warmup 
+            weighted_kl_local = kl_weight * kl_local_for_warmup
+            # print("the output layer grad without sparsity is {}".format(self.z_decoder_accessibility.output[0].weights.grad))
+
+            if self.gates_finetune == True:
+                sparsity_regu = 0.01 * self.z_decoder_accessibility.get_gate_regu(z_acc)
+                # print("original reconst_loss {}, sparsity loss: {}".format(reconst_loss, sparsity_regu))
+                reconst_loss += sparsity_regu
+            # weighted_kl_local += sparsity_regu
+            # print("the output layer grad is {}".format(self.z_decoder_accessibility.output[0].weights.grad))
+            # print("the gates layer grad is {}".format(self.z_decoder_accessibility.gate_layer.FC.fc_layers[0].weights.grad))
+
 
         elif  self.expr_train and  self.acc_train:
             reconst_loss = -(self.n_input_regions +0.0)/(self.n_input_genes)*generative_outputs["px"].log_prob(x).sum(-1) + rl_accessibility
             kl_local_for_warmup = kl_divergence_z + kl_divergence_acc
             kl_local_no_warmup = kl_divergence_l
             weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
+            if self.gates_finetune == True:
+                sparsity_regu = 0.01 * self.z_decoder_accessibility.get_gate_regu(z_acc)
+                # print("original reconst_loss {}, sparsity loss: {}".format(reconst_loss, sparsity_regu))
+                reconst_loss += sparsity_regu
+            # sparsity_regu = 0.1 * self.z_decoder_accessibility.get_gate_regu()
+            # reconst_loss += sparsity_regu
+            # weighted_kl_local += sparsity_regu
         
         if self.finetune == 1:
             z_expr_dep=inference_outputs['z_expr_dep']       
@@ -852,7 +966,7 @@ class HALOVAER(BaseModuleClass):
 
             a2rscore_coupled, _, _ = torch_infer_nonsta_dir(z_acc_dep, z_expr_dep, time)
             r2ascore_coupled, _, _ = torch_infer_nonsta_dir(z_expr_dep, z_acc_dep, time)
-            self.alpha=0.002
+            self.alpha=0.02
             a2rscore_coupled_loss = torch.maximum(self.alpha - a2rscore_coupled + 1e-3, torch.tensor(0))
             r2ascore_coupled_loss = torch.maximum(self.alpha - r2ascore_coupled + 1e-3, torch.tensor(0))
             a2rscore_lagging, _, _ = torch_infer_nonsta_dir(z_acc_indep, z_expr_indep, time)
@@ -865,6 +979,10 @@ class HALOVAER(BaseModuleClass):
             nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64)  + self.beta_3 * a2r_r2a_score_loss + \
             self.beta_2 * a2rscore_coupled_loss + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss
             reconst_loss = reconst_loss + nod_loss * torch.ones_like(reconst_loss)
+            if self.gates_finetune == True:
+                sparsity_regu = 0.01 * self.z_decoder_accessibility.get_gate_regu(z_acc)
+                # print("original reconst_loss {}, sparsity loss: {}".format(reconst_loss, sparsity_regu))
+                reconst_loss += sparsity_regu
             kl_local_for_warmup = kl_divergence_z + kl_divergence_acc + kld_paired
             kl_local_no_warmup = kl_divergence_l
             weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
@@ -987,7 +1105,7 @@ class HALOVAER(BaseModuleClass):
         return log_lkl
 
 
-class LDVAE(VAE):
+class MASKVAE(VAE):
     """
     Linear-decoded Variational auto-encoder model.
 
