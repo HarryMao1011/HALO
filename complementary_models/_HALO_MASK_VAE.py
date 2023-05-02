@@ -18,9 +18,13 @@ from scipy.sparse import csr_matrix
 from scvi._compat import Literal
 from scvi.distributions import NegativeBinomial, Poisson, ZeroInflatedNegativeBinomial
 from scvi.module.base import  LossRecorder, auto_move_data, BaseModuleClass
-from scvi.nn import DecoderSCVI, Encoder, LinearDecoderSCVI, one_hot
-from scvi.module._peakvae import GateDecoder 
+# from scvi.nn import DecoderSCVI, Encoder, LinearDecoderSCVI, one_hot
+from scvi.nn import DecoderSCVI, Encoder, one_hot
+from ._base_components import NeuralDecoderRNA as LinearDecoderSCVI
+# from scvi.nn import NeuralDecoderRNA as LinearDecoderSCVI
+# from scvi.module._peakvae import NeuralGateDecoder as GateDecoder 
 from scvi.module._peakvae import Decoder as DecoderPeakVI
+from .__peak_vae import NeuralGateDecoder as GateDecoder
 
 
 
@@ -138,9 +142,9 @@ class HALOMASKVAE(BaseModuleClass):
         acc_train: Optional[bool] = False,
         finetune: Optional[int] = 0,
         alpha: Optional[float] = 0.002,
-        beta1: Optional[float] = 1e5,
-        beta2: Optional[float] = 1e4,
-        beta3: Optional[float] = 1e5,
+        beta1: Optional[float] = 1e6,
+        beta2: Optional[float] = 5e5,
+        beta3: Optional[float] = 1e8,
         gates_finetune:Optional[bool] = False
 
 
@@ -161,10 +165,7 @@ class HALOMASKVAE(BaseModuleClass):
         # Automatically deactivate if useless
         self.n_batch = n_batch
         self.n_labels = n_labels
-
-        self.beta_2 = 5e5
-        self.beta_3 = 1e8
-        self.beta_1 = 1e6
+  
         self.alpha = alpha
 
         self.latent_distribution = latent_distribution
@@ -530,35 +531,6 @@ class HALOMASKVAE(BaseModuleClass):
         ATAC inference part
         
         """
-        # if self.gates_finetune:
-        #     with torch.no_grad():
-        #         if cont_covs is not None and self.encode_covariates:
-        #             encoder_input_accessibility = torch.cat((x_chr, cont_covs), dim=-1)
-        #         else:
-        #             encoder_input_accessibility = x_chr
-
-
-        #         if cat_covs is not None and self.encode_covariates:
-        #             categorical_input = torch.split(cat_covs, 1, dim=1)
-        #         else:
-        #             categorical_input = tuple()
-
-        #         libsize_acc = self.l_encoder_accessibility(
-        #             encoder_input_accessibility, batch_index, *categorical_input
-        #         )
-
-        #         qz_acc, z_acc = self.z_encoder_accessibility(
-        #             encoder_input_accessibility, batch_index, *categorical_input
-        #         )
-
-        #         if n_samples > 1:
-        #             untran_za = qz_acc.sample((n_samples,))
-        #             z_acc = self.z_encoder_accessibility.z_transformation(untran_za)
-        #             libsize_acc = libsize_acc.unsqueeze(0).expand(
-        #                 (n_samples, libsize_acc.size(0), libsize_acc.size(1))
-        #             )
-
-        # else:
 
         if cont_covs is not None and self.encode_covariates:
             encoder_input_accessibility = torch.cat((x_chr, cont_covs), dim=-1)
@@ -778,12 +750,14 @@ class HALOMASKVAE(BaseModuleClass):
         """
         self.finetune = finetune
 
-    def set_scale_params(self, beta1, beta2, beta3, alpha=0.0002):
+    def set_scale_params(self, beta1, beta2, beta3, alpha=0.02):
         self.beta_1 = beta1
         self.beta_2 = beta2
         self.beta_3 = beta3
         self.alpha = alpha
 
+    def get_scale_params(self):
+        return [self.beta1, self.beta2, self.beta3, self.alpha]
 
 
     def loss(
@@ -837,21 +811,6 @@ class HALOMASKVAE(BaseModuleClass):
         reconst_loss = 0
         weighted_kl_local = 0
 
-        # qzm_expr_dep=inference_outputs['qzm_expr_dep']
-        # qzv_expr_dep=inference_outputs['qzv_expr_dep']
-        # qzm_acc_dep=inference_outputs['qzm_acc_dep']
-        # qzv_acc_dep=inference_outputs['qzv_acc_dep']
-
-        # # print("loss qzv_acc_dep type: {}".format(type(qzv_acc_dep)) )       
-        # ## lagging part 
-        # z_expr_indep=inference_outputs['z_expr_indep']
-        # z_acc_indep= inference_outputs['z_acc_indep']
-
-        # time = inference_outputs['time_key']
-        # print("time : {}".format(time))
-
-        # print("qzm_expr_dep {}, qzv_expr_dep {}, qzm_acc_dep {}, qzv_acc_dep {}".format(qzm_expr_dep, qzv_expr_dep, qzm_acc_dep, qzv_acc_dep))
-
 
 
 
@@ -872,7 +831,7 @@ class HALOMASKVAE(BaseModuleClass):
             # print("the output layer grad without sparsity is {}".format(self.z_decoder_accessibility.output[0].weights.grad))
 
             if self.gates_finetune == True:
-                sparsity_regu = 0.01 * self.z_decoder_accessibility.get_gate_regu(z_acc)
+                sparsity_regu = 1e-4 * self.z_decoder_accessibility.get_gate_regu(z_acc)
                 # print("original reconst_loss {}, sparsity loss: {}".format(reconst_loss, sparsity_regu))
                 reconst_loss += sparsity_regu
             # weighted_kl_local += sparsity_regu
@@ -885,10 +844,10 @@ class HALOMASKVAE(BaseModuleClass):
             kl_local_for_warmup = kl_divergence_z + kl_divergence_acc
             kl_local_no_warmup = kl_divergence_l
             weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
-            if self.gates_finetune == True:
-                sparsity_regu = 0.01 * self.z_decoder_accessibility.get_gate_regu(z_acc)
-                # print("original reconst_loss {}, sparsity loss: {}".format(reconst_loss, sparsity_regu))
-                reconst_loss += sparsity_regu
+            # if self.gates_finetune == True:
+                # sparsity_regu = 1e-4 * self.z_decoder_accessibility.get_gate_regu(z_acc)
+                # # print("original reconst_loss {}, sparsity loss: {}".format(reconst_loss, sparsity_regu))
+                # reconst_loss += sparsity_regu
             # sparsity_regu = 0.1 * self.z_decoder_accessibility.get_gate_regu()
             # reconst_loss += sparsity_regu
             # weighted_kl_local += sparsity_regu
@@ -916,20 +875,33 @@ class HALOMASKVAE(BaseModuleClass):
 
             a2rscore_coupled, _, _ = torch_infer_nonsta_dir(z_acc_dep, z_expr_dep, time)
             r2ascore_coupled, _, _ = torch_infer_nonsta_dir(z_expr_dep, z_acc_dep, time)
-            self.alpha=0.002
+            # self.alpha=0.002
             a2rscore_coupled_loss = torch.maximum(self.alpha - a2rscore_coupled + 1e-3, torch.tensor(0))
             r2ascore_coupled_loss = torch.maximum(self.alpha - r2ascore_coupled + 1e-3, torch.tensor(0))
+
+            a2rscore_coupled_loss = torch.maximum(self.alpha - a2rscore_coupled , torch.tensor(0))
+            r2ascore_coupled_loss = torch.maximum(self.alpha - r2ascore_coupled, torch.tensor(0))
+
             a2rscore_lagging, _, _ = torch_infer_nonsta_dir(z_acc_indep, z_expr_indep, time)
             r2ascore_lagging, _, _ = torch_infer_nonsta_dir(z_expr_indep, z_acc_indep, time)
-            a2r_r2a_score_loss =  torch.maximum(a2rscore_lagging-r2ascore_lagging+1e-4, torch.tensor(0))
+
+            # a2r_r2a_score_loss =  torch.maximum(a2rscore_lagging-r2ascore_lagging+1e-4, torch.tensor(0))
+            a2r_r2a_score_loss =  torch.maximum(a2rscore_lagging-r2ascore_lagging, torch.tensor(0))
+            a2rscore_lagging = torch.maximum(-self.alpha + a2rscore_lagging, torch.tensor(0))
+            r2ascore_decoupled_loss = torch.maximum(self.alpha - r2ascore_lagging, torch.tensor(0))
+
+
+
 
             # print(a2rscore_coupled, r2ascore_coupled, a2rscore_lagging, r2ascore_lagging)
 
-            self.beta_2 = 5e5
-            self.beta_3 = 1e8
-            self.beta_1 = 1e6
+            # self.beta_2 = 5e5
+            # self.beta_3 = 1e8
+            # self.beta_1 = 1e6
+
             nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64)  + self.beta_3 * a2r_r2a_score_loss + \
-            self.beta_2 * a2rscore_coupled_loss + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss
+            self.beta_2 * a2rscore_coupled_loss + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss \
+                + self.beta1 * r2ascore_decoupled_loss
             reconst_loss = nod_loss * torch.ones_like(reconst_loss)
             # print("kld_paird loss {}, kld_divergence_acc {}, kld_paired {}"\
             #     .format(kl_divergence_z.shape, kl_divergence_acc.shape, kld_paired.shape))
@@ -966,18 +938,26 @@ class HALOMASKVAE(BaseModuleClass):
 
             a2rscore_coupled, _, _ = torch_infer_nonsta_dir(z_acc_dep, z_expr_dep, time)
             r2ascore_coupled, _, _ = torch_infer_nonsta_dir(z_expr_dep, z_acc_dep, time)
-            self.alpha=0.02
-            a2rscore_coupled_loss = torch.maximum(self.alpha - a2rscore_coupled + 1e-3, torch.tensor(0))
-            r2ascore_coupled_loss = torch.maximum(self.alpha - r2ascore_coupled + 1e-3, torch.tensor(0))
+            # self.alpha=0.02
+
+            a2rscore_coupled_loss = torch.maximum(self.alpha - a2rscore_coupled, torch.tensor(0))
+            r2ascore_coupled_loss = torch.maximum(self.alpha - r2ascore_coupled, torch.tensor(0))
             a2rscore_lagging, _, _ = torch_infer_nonsta_dir(z_acc_indep, z_expr_indep, time)
             r2ascore_lagging, _, _ = torch_infer_nonsta_dir(z_expr_indep, z_acc_indep, time)
-            a2r_r2a_score_loss =  torch.maximum(a2rscore_lagging-r2ascore_lagging+1e-4, torch.tensor(0))
+            a2r_r2a_score_loss =  torch.maximum(a2rscore_lagging-r2ascore_lagging+1e-4, torch.tensor(0)) 
+            a2rscore_lagging = torch.maximum(-self.alpha + a2rscore_lagging, torch.tensor(0))
+            r2ascore_lagging = torch.maximum(-self.alpha + r2ascore_lagging, torch.tensor(0))
 
-            self.beta_2 = 5e5
-            self.beta_3 = 1e8
-            self.beta_1 = 1e6
-            nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64)  + self.beta_3 * a2r_r2a_score_loss + \
-            self.beta_2 * a2rscore_coupled_loss + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss
+
+            # self.beta_2 = 5e5
+            # self.beta_3 = 1e8
+            # self.beta_1 = 1e6
+
+
+            nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64) + self.beta_1 * r2ascore_lagging.to(torch.float64)\
+                  + self.beta_3 * a2r_r2a_score_loss + self.beta_2 * a2rscore_coupled_loss \
+                     + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss \
+            
             reconst_loss = reconst_loss + nod_loss * torch.ones_like(reconst_loss)
             if self.gates_finetune == True:
                 sparsity_regu = 0.01 * self.z_decoder_accessibility.get_gate_regu(z_acc)

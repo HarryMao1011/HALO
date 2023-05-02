@@ -3,7 +3,7 @@ from typing import List, Optional
 
 from anndata import AnnData
 from scipy.sparse import csr_matrix
-
+import scvi
 from .REGISTRY_KEYS import REGISTRY_KEYS
 from scvi._compat import Literal
 # from scvi._types import LatentDataType
@@ -48,6 +48,7 @@ import tools.adata_interface.core as adi
 import tools.adata_interface.regulators as ri
 from  tools.plots.factor_influence_plot import plot_factor_influence
 logger = logging.getLogger(__name__)
+import scanpy as sc
 
 class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin, BaseModelClass):
     def __init__(
@@ -127,7 +128,26 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         self.enrichments = dict()
         # self.num_exo_features = 0
     
-    
+    def scheduled_train(self, epoch=400, batch_size=16):
+        
+        recon_epoch = epoch * 0.75
+        
+        causal_epoch = epoch*0.25
+
+        for i in range(epoch):
+            if i < recon_epoch:
+                print("start training RNA and ATAC reconstruction ... ")
+                self.module.set_train_params(expr_train=True, acc_train=True)
+                self.module.set_finetune_params(0)
+                self.train(max_epochs=recon_epoch, batch_size=batch_size)
+            elif i >= recon_epoch and i < epoch:
+                print("start training the causal constraints and reconstruction ...")
+                self.module.set_train_params(expr_train=True, acc_train=True)
+                self.module.set_finetune_params(2)
+                self.train(max_epochs=causal_epoch, batch_size=batch_size)
+
+
+
 
     @classmethod
     @setup_anndata_dsp.dedent
@@ -277,7 +297,75 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
 
 
     @torch.no_grad()
-    def get_atac_loading(
+    def get_atac_expr_denoms(
+        self,
+        adata: Optional[AnnData] = None,
+        indices: Optional[Sequence[int]] = None,
+        batch_size: Optional[int] = None,
+    ) -> np.ndarray:
+        """
+        Return the latent representation for each cell.
+        Parameters
+        ----------
+        adata
+            AnnData object with equivalent structure to initial AnnData. If `None`, defaults to the
+            AnnData object used to initialize the model.
+        modality
+            Return modality specific or joint latent representation.
+        indices
+            Indices of cells in adata to use. If `None`, all cells are used.
+        give_mean
+            Give mean of distribution or sample from it.
+        batch_size
+            Minibatch size for data loading into model. Defaults to `scvi.settings.batch_size`.
+        Returns
+        -------
+        latent_representation : np.ndarray
+            Low-dimensional representation for each cell
+        """
+        # if not self.is_trained_:
+        #     raise RuntimeError("Please train the model first.")
+
+        # keys = {
+        # ## integrated RNA
+        # "qz_expr_m": "qz_expr_m", "qz_expr_v": "qz_expr_v" , "z_expr":"z_expr",
+        # ## integrated ATAC
+        # "qz_acc_m": "qz_acc_m", "qz_acc_v": "qz_acc_v",  "z_acc": "z_acc",
+        # ## dependent RNA components 
+        # "z_expr_dep":"z_expr_dep", "qzm_expr_dep":"qzm_expr_dep", "qzv_expr_dep":"qzv_expr_dep",
+        # ## dependent ATAC components
+        # "z_acc_dep":"z_acc_dep", "qzm_acc_dep":"qzm_acc_dep", "qzv_acc_dep":"qzv_acc_dep",
+        # ## independent/lagging RNA components
+        # "z_expr_indep": "z_expr_indep","qzm_expr_indep": "qzm_expr_indep", "qzv_expr_indep":"qzv_expr_indep",
+        # ## independent/lagging ATAC components
+        # "z_acc_indep": "z_acc_indep", "qzm_acc_indep":"qzm_acc_indep", "qzv_acc_indep":"qzv_acc_indep"
+        # }
+        
+
+        adata = self._validate_anndata(adata)
+        scdl = self._make_data_loader(
+            adata=adata, indices=indices, batch_size=batch_size
+        )
+        rna_denoms = []
+        atac_denoms = []
+       
+        for tensors in scdl:
+            inference_inputs = self.module._get_inference_input(tensors)
+            outputs = self.module.inference(**inference_inputs)      
+            z_expr = outputs["z"]
+            z_acc = outputs["z_acc"]
+            library_sz =  outputs[""]
+            # loading = self.module.z_decoder_accessibility.get_loading_global_weights(z_acc)
+            atac_denom = self.module.z_decoder_accessibility._get_softmax_denom(z_acc)
+            rna_denom = self.module.decoder._get_softmax_denom(z_expr)
+            atac_denoms+= [atac_denom.cpu()]
+            rna_denoms += [rna_denom.cpu()]
+   
+        return  torch.cat(atac_denoms).numpy(), torch.cat(rna_denoms).numpy()
+
+
+    @torch.no_grad()
+    def get_rna_atac_denoms(
         self,
         adata: Optional[AnnData] = None,
         indices: Optional[Sequence[int]] = None,
@@ -340,10 +428,11 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         # nploadings =  np.array(loadings)
         # nploadings = nploadings.mean()
         loadings = np.concatenate(loadings, axis=0)
-        loadings = np.abs(np.mean(loadings, axis=0))
+        loadings = np.mean(loadings, axis=0)
 
 
         return  loadings
+
 
     # def set_exognum(self, exo_num):
     #     self.num_exo_features = exo_num
@@ -391,7 +480,9 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         
 
 
-        loadings = self.module.z_decoder_accessibility.get_loading_merged_feature()
+        # loadings = self.module.z_decoder_accessibility.get_loading_merged_feature()
+        loadings = self.module.z_decoder_accessibility.get_loading_global_weights()
+
 
 
         return  loadings
@@ -442,8 +533,6 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         print("module_idx len after {}".format(len(module_idx)))
 
 
-        # module_idx = self._argsort_peaks(topic_num, loadings=loadings)[-int(num_peaks*top_quantile) : ]
-        # module_idx = self._argsort_peaks(topic_num, loadings=loadings)[:int(num_peaks*top_quantile)]
         pvals, test_statistics = [], []
         for i in tqdm(range(hits_matrix.shape[0]), 'Finding enrichments'):
 
@@ -491,6 +580,18 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         return np.argsort(loadings[latent_num, :])
 
 
+    def get_coupled_decoupled_genes(self, loadingmatrix):
+        """
+        
+        """
+        return NotImplemented
+
+
+    def get_coupled_decoupled_peaks(self, loadingmatrix):
+        """
+        
+        """
+        return NotImplemented    
 
 
 
@@ -1107,4 +1208,79 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
             palette = palette, legend_label = legend_label, show_legend = show_legend, label_closeness = label_closeness, 
             na_color = na_color, max_label_repeats = max_label_repeats, figsize=figsize,
             axlabels = ('Topic {} Enrichments'.format(str(topic_1)),'Todule {} Enrichments'.format(str(topic_2))), 
-            fontsize = fontsize, color = color)  
+            fontsize = fontsize, color = color) 
+
+
+    def get_rna_loading(self):
+        return self.module.get_loadings()         
+
+    def get_rna_decoupled_score(self, rnaloading, rnadata):
+        
+        genes_num = rnaloading.shape[1]
+        decouple_scores = []
+        couple_scores = []
+
+        for i in range(genes_num):
+            couple_latent = rnaloading[:5, i]
+            decouple_latent = rnaloading[5:,i]
+            decouplescore = np.abs(np.mean(decouple_latent, axis=0))
+            couplescore = np.abs(np.mean(couple_latent, axis=0))
+            decouple_scores.append(decouplescore)
+            couple_scores.append(couplescore)
+
+
+
+
+
+        #     if np.max(couple_latent) >= np.max(decouple_latent) and np.min(couple_latent) >= np.min(decouple_latent) and np.min(couple_latent)>0:
+        #         type_dict.append("coupled")
+
+        #     elif np.max(decouple_latent) >= np.max(couple_latent) and np.min(decouple_latent) >= np.min(couple_latent) and np.min(decouple_latent)>0:
+        #         type_dict.append("decoupled")
+        #     else:
+        #         type_dict.append("neither")
+
+        # type_dict = np.array(type_dict)
+
+        couple_scores = np.array(couple_scores)
+        decouple_scores = np.array(decouple_scores)
+        rnadata.var["decouple_score"] = decouple_scores
+        rnadata.var["couple_socre"] = couple_scores
+
+        return couple_scores, decouple_scores
+
+    classmethod
+    def setup_dataset(multiomic="halo/E18_mouse_Brain/multiomic.h5ad", rna_ann="halo/E18_mouse_Brain/RNA/metadata.tsv"):
+        adata_multi = sc.read_h5ad(multiomic)
+        adata_multi.obs["batch_id"] = 1
+        adata_multi.var["modality"] =adata_multi.var["feature_types"]
+        adata_mvi = scvi.data.organize_multiome_anndatas(adata_multi)
+
+        df_meta= pd.read_csv(rna_ann,sep = "\t",index_col=0)
+        bins = df_meta.binned.unique()
+        times = {}
+        index = 0
+        for bin in sorted(bins):
+            times[bin] = index
+            index += 1
+
+        def add_time(row, times):
+            timestamp = times[row.binned]
+            return timestamp
+
+        df_meta['time_key'] = df_meta.apply(lambda row: add_time(row, times), axis=1)
+
+        newindex = []
+
+        for idx, row in df_meta.iterrows():
+            newindex.append(idx+"_paired")
+
+        df_meta['Id'] = newindex    
+
+        df_meta_sub = df_meta[["Id", 'latent_time']]
+
+        df_meta_sub.set_index("Id", inplace=True)
+        adata_mvi.obs = adata_mvi.obs.join(df_meta_sub, how="inner")
+        sc.pp.filter_genes(adata_mvi, min_cells=int(adata_mvi.shape[0] * 0.01))
+        return adata_mvi    
+

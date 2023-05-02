@@ -1,6 +1,8 @@
 from torch import Tensor
 import numpy as np
 import torch
+import anndata
+import pandas as pd
 
 def torch_kernel(x, xKern, theta):
     # KERNEL Compute the rbf kernel
@@ -119,3 +121,58 @@ def torch_infer_nonsta_dir(X, Y, c_indx, width=0.1, IF_GP=False, device='cuda'):
 
     return testStat, Mg, Mg2
 
+
+
+def split_rna(adata_mvi):
+    rna_index = adata_mvi.var['modality'] =="Gene Expression"
+    rna_data = anndata.AnnData(X=adata_mvi.X[:, rna_index],
+    obs=adata_mvi.obs, 
+    var=adata_mvi.var[rna_index])
+    return rna_data
+
+def split_atac(adata_mvi):
+    atac_index = adata_mvi.var['modality'] =="Peaks"
+    atac_data = anndata.AnnData(X=adata_mvi.X[:, atac_index],
+                            obs=adata_mvi.obs, 
+                            var=adata_mvi.var[atac_index])
+    return atac_data
+
+def split_atac_rna(adata_mvi):
+    return split_atac(adata_mvi),split_rna(adata_mvi)                    
+
+
+def parsing_chr_se(row):
+    row = row['gene_ids']
+    row = row.split("\t")[0]
+    chrome = row[: row.find(":")]
+    start = row[row.find(":")+1: row.find("-")]
+    end = row[row.find("-")+1 :]
+    newcol = pd.Series([chrome, start, end]) 
+    return newcol
+
+def reindex_atac(atac_data):
+
+    atac_data.var["peak_id"] = np.arange(1, atac_data.var.shape[0]+1)
+    atac_data.var[['chr', 'start', 'end']] =  atac_data.var.apply(parsing_chr_se, axis=1) 
+    atac_data.var = atac_data.var[['peak_id', 'chr', 'start', 'end', "n_cells"]]
+    atac_data.var.reset_index(drop=True)
+    atac_data.var.set_index("peak_id",inplace=True)
+    return atac_data   
+
+def generate_peakid(row):
+    chr = row['chr']
+    start = row["start"]
+    end = row["end"]
+    peak = chr+'_' + start+ '_' + end
+    return peak
+
+def merge_atac_annotation(annotation, atac_data):
+    atac_annotation = pd.read_csv(annotation, sep='\t')
+    atac_data.var['peak'] =  atac_data.var.apply(generate_peakid, axis=1)
+    new_var = pd.merge(atac_data.var, atac_annotation, left_on='peak', right_on='peak')
+    atac_data.var = new_var
+
+    return atac_data
+
+
+    

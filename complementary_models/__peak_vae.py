@@ -83,8 +83,176 @@ class Decoder(torch.nn.Module):
         x = self.output(self.px_decoder(z, *cat_list))
         return x
 
+class Model(torch.nn.Module):
+
+    def __init__(self, config, name):
+        super(Model, self).__init__()
+        self._config = config
+        self._name = name
+
+    def forward(self):
+        raise NotImplementedError
+
+    def __str__(self):
+        return f'{self.__class__.__name__}(name={self._name})'
+
+    @property
+    def config(self):
+        return self._config
+
+    @property
+    def name(self):
+        return self._name
+
+import torch
+import torch.nn.functional as F
+from torch.nn.parameter import Parameter
+
+
+class ExU(torch.nn.Module):
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+    ) -> None:
+        super(ExU, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weights = Parameter(torch.Tensor(in_features, out_features))
+        self.bias = Parameter(torch.Tensor(in_features))
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        ## Page(4): initializing the weights using a normal distribution
+        ##          N(x; 0:5) with x 2 [3; 4] works well in practice.
+        torch.nn.init.trunc_normal_(self.weights, mean=4.0, std=0.5)
+        torch.nn.init.trunc_normal_(self.bias, std=0.5)
+
+    def forward(
+        self,
+        inputs: torch.Tensor,
+        n: int = 1,
+    ) -> torch.Tensor:
+        output = (inputs - self.bias).matmul(torch.exp(self.weights))
+
+        # ReLU activations capped at n (ReLU-n)
+        output = F.relu(output)
+        output = torch.clamp(output, 0, n)
+
+        return output
+
+    def extra_repr(self):
+        return f'in_features={self.in_features}, out_features={self.out_features}'
+
+class LinReLU(torch.nn.Module):
+    __constants__ = ['bias']
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+    ) -> None:
+        super(LinReLU, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weights = Parameter(torch.Tensor(in_features, out_features))
+        self.bias = Parameter(torch.Tensor(in_features))
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        nn.init.xavier_uniform_(self.weights)
+        torch.nn.init.trunc_normal_(self.bias, std=0.5)
+
+    def forward(
+        self,
+        inputs: torch.Tensor,
+    ) -> torch.Tensor:
+        output = (inputs - self.bias) @ self.weights
+        output = F.relu(output)
+
+        return output
+
+    def extra_repr(self):
+        return f'in_features={self.in_features}, out_features={self.out_features}'
+
+
+class FeatureNN(Model):
+    """Neural Network model for each individual feature."""
+
+    def __init__(
+        self,
+        config,
+        name,
+        *,
+        input_shape: int,
+        num_units: int,
+        feature_num: int = 0,
+    ) -> None:
+        """Initializes FeatureNN hyperparameters.
+        Args:
+          num_units: Number of hidden units in first hidden layer.
+          dropout: Coefficient for dropout regularization.
+          feature_num: Feature Index used for naming the hidden layers.
+        """
+        super(FeatureNN, self).__init__(config, name)
+        self._input_shape = input_shape
+        self._num_units = num_units
+        self._feature_num = feature_num
+        self.dropout = nn.Dropout(p=self.config.dropout)
+
+        hidden_sizes = [self._num_units] + self.config.hidden_sizes
+
+        layers = []
+
+        ## First layer is ExU
+        if self.config.activation == "exu":
+            layers.append(ExU(in_features=input_shape, out_features=num_units))
+        else:
+            layers.append(LinReLU(in_features=input_shape, out_features=num_units))
+
+        ## Hidden Layers
+        for in_features, out_features in zip(hidden_sizes, hidden_sizes[1:]):
+            layers.append(LinReLU(in_features, out_features))
+
+        ## Last Linear Layer
+        layers.append(nn.Linear(in_features=hidden_sizes[-1], out_features=1))
+
+        self.model = nn.ModuleList(layers)
+        # self.apply(init_weights)
+
+    def forward(self, inputs) -> torch.Tensor:
+        """Computes FeatureNN output with either evaluation or training
+        mode."""
+        outputs = inputs.unsqueeze(1)
+        for layer in self.model:
+            outputs = self.dropout(layer(outputs))
+        return outputs
 
 class parallel_linear_layer(torch.nn.Module):
+  
+  def __init__(self, h, w):
+    super(parallel_linear_layer, self).__init__()
+    self.batchnorm = nn.BatchNorm2d(20)
+    self.weights = nn.Parameter(torch.Tensor(h, w))  # define the trainable parameter
+    # self.bias = nn.Parameter(torch.Tensor(w))
+    # print("linear weight shape {}".format(self.weights.shape))
+    # print("bias shape is {}".format(self.bias.shape))
+
+
+  def forward(self, x):
+    # assuming x is of size b-n-h-w
+    # print("input shape {}, weight shape {}".format(x.shape, self.weights.shape))
+    x = torch.mul(x, self.weights.unsqueeze(0))  # element-wise multiplication
+    x = torch.sum(x, dim=1)
+    # x = torch.add(x, self.bias)
+    # print("parallel output shape is {}".format(x.shape))
+    return x
+
+
+
+class normed_parallel_linear_layer(torch.nn.Module):
   
   def __init__(self, h, w):
     super(parallel_linear_layer, self).__init__()
@@ -566,12 +734,12 @@ class GateDecoder(torch.nn.Module):
         conc_out = conc_out.unsqueeze(-1)
         # print("after contacnated feature shape is {}".format(conc_out.shape))
         # print("gate layer fine tune parameters are {}".format(self.fine_tune))
-        if self.fine_tune:
-            gates = self.calc_gates_repeat(z)
-            x = torch.mul(conc_out, gates)
+        # if self.fine_tune:
+        gates = self.calc_gates_repeat(z)
+        x = torch.mul(conc_out, gates)
 
-        else:
-            x = conc_out    
+        # else:
+        #     x = conc_out    
 
         x = self.output(x)
         # feature_list = self.calc_gated_feature(gates, conc_out)
@@ -610,11 +778,11 @@ class GateDecoder(torch.nn.Module):
         loadings = torch.mul(self.output[0].weights.unsqueeze(0), loadings)
         # loadings =np.abs(loadings.detach().cpu().numpy())
         # loadings = self.output[0].weights.unsqueeze(0)
-        loadings =np.abs(loadings.detach().cpu().numpy())
+        loadings =loadings.detach().cpu().numpy()
         # print("loadings shape is {}".format(loadings.shape))
         aggregate_loadings = []
         for i in range(self.n_input):
-            aggregate_loadings.append(np.mean(loadings[:, i*self.n_hidden_local:(i+1)*self.n_hidden_local, :], axis=1))
+            aggregate_loadings.append(np.sum(loadings[:, i*self.n_hidden_local:(i+1)*self.n_hidden_local, :], axis=1))
         aggregate_loadings = np.concatenate(aggregate_loadings, axis=0)
 
         return aggregate_loadings
@@ -642,11 +810,11 @@ class GateDecoder(torch.nn.Module):
     def get_loading_merged_feature(self):
 
         loadings = self.output[0].weights
-        loadings =np.abs(loadings.detach().cpu().numpy())
+        loadings =loadings.detach().cpu().numpy()
         # print("loading shape is {}".format(loadings.shape))
         aggregate_loadings = []
         for i in range(self.n_input):
-            aggregate_loadings.append(np.expand_dims(np.mean(loadings[i*8:(i+1)*8, :], axis=0),axis=0))
+            aggregate_loadings.append(np.expand_dims(np.sum(loadings[i*8:(i+1)*8, :], axis=0),axis=0))
         aggregate_loadings = np.concatenate(aggregate_loadings, axis=0)
 
         return aggregate_loadings    
@@ -654,7 +822,7 @@ class GateDecoder(torch.nn.Module):
          
     
 
-class BinaryGateDecoder(torch.nn.Module):
+class NeuralGateDecoder(torch.nn.Module):
     """
     Decodes data from latent space of ``n_input`` dimensions ``n_output``dimensions.
 
@@ -691,7 +859,7 @@ class BinaryGateDecoder(torch.nn.Module):
         n_output: int,
         n_cat_list: Iterable[int] = None,
         n_layers: int = 2,
-        n_hidden_local: int = 8,
+        n_hidden_local: int = 20,
         n_hidden_global: int=128,
         use_batch_norm: bool = False,
         use_layer_norm: bool = True,
@@ -707,22 +875,20 @@ class BinaryGateDecoder(torch.nn.Module):
         self.fine_tune = fine_tune
         
         ## Binary Masks has two decouple and couple senarios
-        self.gate_layer = GateLayer(
-            n_input=n_input,
-            n_output=2*n_output,
-            n_layers=1,
-            n_hidden=n_hidden_global,
-            sigma= 0.1,
-            finetune=False
-        )
-
+        # self.gate_layer = GateLayer(
+        #     n_input=n_input,
+        #     n_output=n_output,
+        #     n_layers=1,
+        #     n_hidden=n_hidden_global,
+        #     sigma= 0.1,
+        #     finetune=False
+        # )
 
         feature_list = []
         for i in range(self.n_input):
-
             feature_list.append(FCLayers(
             n_in=1,
-            n_out=n_hidden_local,
+            n_out=1,
             n_cat_list=n_cat_list,
             n_layers=n_layers,
             n_hidden=n_hidden_local,
@@ -736,10 +902,18 @@ class BinaryGateDecoder(torch.nn.Module):
 
 
 
-        self.output = torch.nn.Sequential(
-            parallel_linear_layer(n_hidden_local*n_input, n_output),
-            torch.nn.Sigmoid()
-        )
+        self.output =  torch.nn.Sequential(FCLayers(
+            n_in=n_input,
+            n_out=n_output,
+            n_layers=1,
+            bias=False,
+            dropout_rate=0,
+            use_activation=False,
+            use_batch_norm=True,
+            use_layer_norm=use_layer_norm,
+            inject_covariates=deep_inject_covariates),
+            # torch.nn.Sigmoid())
+            nn.Softmax(dim=-1))
 
  
         print("gate decoder initialization n_input {}, n_output {}, \
@@ -791,22 +965,20 @@ class BinaryGateDecoder(torch.nn.Module):
         # gates = self.calc_gates_repeat(z)
         individual_outputs = self.calc_feature_outputs(z, self.n_cat_list)
         conc_out = torch.cat(individual_outputs, dim=-1)
-        # print("before gates shape is {}".format(gates.shape))
-        conc_out = conc_out.unsqueeze(-1)
-        # print("after contacnated feature shape is {}".format(conc_out.shape))
-        if self.fine_tune:
-            gates = self.calc_gates_repeat(z)
-            x = torch.mul(conc_out, gates)
-
-        else:
-            x = conc_out    
-
-        x = self.output(x)
-       
+        x = self.output(conc_out) 
         return x
+
+    # @torch.no_grad
+    def _get_softmax_denom(self, z: torch.Tensor):
+        individual_outputs = self.calc_feature_outputs(z, self.n_cat_list)
+        conc_out = torch.cat(individual_outputs, dim=-1)
+        x = self.output[0](conc_out) 
+        return x.exp().sum(-1)
+
+
     @torch.no_grad()
     def get_gate_regu(self, z):
-        return self.gate_layer.sparsity_loss(z) 
+        return 0
 
     @torch.no_grad()
     def get_loading_global(self, z:torch.Tensor):
@@ -826,8 +998,19 @@ class BinaryGateDecoder(torch.nn.Module):
 
         # loadings = self.calc_gates_repeat(inputs)
         # loadings = torch.mul(self.output[0].weights.unsqueeze(0), loadings)
-        loadings = self.output[0].weights.unsqueeze(0)
-        loadings = loadings.detach().cpu().numpy()
+
+        w = self.output[0].fc_layers[0][0].weight.cpu().numpy()
+        bn = self.output[0].fc_layers[0][1]
+        sigma = torch.sqrt(bn.running_var + bn.eps)
+        gamma = bn.weight
+        b = gamma / sigma
+        b= b.cpu().numpy()
+        bI = np.diag(b)
+        loadings = np.matmul(bI, w)
+
+        # loadings = self.output[0].weights.unsqueeze(0)
+        # loadings = loadings.detach().cpu().numpy()
+
         return loadings
 
 
@@ -872,7 +1055,7 @@ class Decoder(torch.nn.Module):
         n_cat_list: Iterable[int] = None,
         n_layers: int = 2,
         n_hidden: int = 128,
-        use_batch_norm: bool = False,
+        use_batch_norm: bool = True,
         use_layer_norm: bool = True,
         deep_inject_covariates: bool = False,
     ):
