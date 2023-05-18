@@ -949,6 +949,16 @@ class HALOMASKVAE(BaseModuleClass):
             r2ascore_lagging = torch.maximum(-self.alpha + r2ascore_lagging, torch.tensor(0))
 
 
+
+            # a2rscore_coupled_loss = torch.exp(a2rscore_coupled_loss)
+            # r2ascore_coupled_loss = torch.exp(r2ascore_coupled_loss)
+            # a2rscore_lagging =  torch.exp(a2rscore_lagging)
+            # r2ascore_lagging =  torch.exp(r2ascore_lagging)
+            # a2r_r2a_score_loss =  torch.exp(r2ascore_lagging) 
+            # a2rscore_lagging = torch.exp( a2rscore_lagging)
+            # r2ascore_lagging = torch.exp(r2ascore_lagging)
+
+
             # self.beta_2 = 5e5
             # self.beta_3 = 1e8
             # self.beta_1 = 1e6
@@ -956,7 +966,8 @@ class HALOMASKVAE(BaseModuleClass):
 
             nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64) + self.beta_1 * r2ascore_lagging.to(torch.float64)\
                   + self.beta_3 * a2r_r2a_score_loss + self.beta_2 * a2rscore_coupled_loss \
-                     + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss \
+                     + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss
+
             
             reconst_loss = reconst_loss + nod_loss * torch.ones_like(reconst_loss)
             if self.gates_finetune == True:

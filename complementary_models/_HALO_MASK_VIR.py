@@ -58,6 +58,7 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         n_regions: int,
         n_hidden: int = 128,
         n_latent: int = 10,
+        n_dependent: int = 5,
         n_layers: int = 1,
         dropout_rate: float = 0.1,
         dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
@@ -95,6 +96,7 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
             n_input_regions = n_regions,
             n_batch=n_batch,
             n_labels=n_labels,
+            n_latent_dep= n_dependent,
             n_continuous_cov=self.summary_stats.get("n_extra_continuous_covs", 0),
             n_cats_per_cov=n_cats_per_cov,
             n_hidden=n_hidden,
@@ -145,8 +147,6 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
                 self.module.set_train_params(expr_train=True, acc_train=True)
                 self.module.set_finetune_params(2)
                 self.train(max_epochs=causal_epoch, batch_size=batch_size)
-
-
 
 
     @classmethod
@@ -460,31 +460,7 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         latent_representation : np.ndarray
             Low-dimensional representation for each cell
         """
-        # if not self.is_trained_:
-        #     raise RuntimeError("Please train the model first.")
-
-        # keys = {
-        # ## integrated RNA
-        # "qz_expr_m": "qz_expr_m", "qz_expr_v": "qz_expr_v" , "z_expr":"z_expr",
-        # ## integrated ATAC
-        # "qz_acc_m": "qz_acc_m", "qz_acc_v": "qz_acc_v",  "z_acc": "z_acc",
-        # ## dependent RNA components 
-        # "z_expr_dep":"z_expr_dep", "qzm_expr_dep":"qzm_expr_dep", "qzv_expr_dep":"qzv_expr_dep",
-        # ## dependent ATAC components
-        # "z_acc_dep":"z_acc_dep", "qzm_acc_dep":"qzm_acc_dep", "qzv_acc_dep":"qzv_acc_dep",
-        # ## independent/lagging RNA components
-        # "z_expr_indep": "z_expr_indep","qzm_expr_indep": "qzm_expr_indep", "qzv_expr_indep":"qzv_expr_indep",
-        # ## independent/lagging ATAC components
-        # "z_acc_indep": "z_acc_indep", "qzm_acc_indep":"qzm_acc_indep", "qzv_acc_indep":"qzv_acc_indep"
-        # }
-        
-
-
-        # loadings = self.module.z_decoder_accessibility.get_loading_merged_feature()
         loadings = self.module.z_decoder_accessibility.get_loading_global_weights()
-
-
-
         return  loadings
 
     ## get the enriched TFs
@@ -1228,10 +1204,6 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
             decouple_scores.append(decouplescore)
             couple_scores.append(couplescore)
 
-
-
-
-
         #     if np.max(couple_latent) >= np.max(decouple_latent) and np.min(couple_latent) >= np.min(decouple_latent) and np.min(couple_latent)>0:
         #         type_dict.append("coupled")
 
@@ -1283,4 +1255,18 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         adata_mvi.obs = adata_mvi.obs.join(df_meta_sub, how="inner")
         sc.pp.filter_genes(adata_mvi, min_cells=int(adata_mvi.shape[0] * 0.01))
         return adata_mvi    
+
+    def _argsort_geness(self, latent_num, loadings):
+        
+        return np.argsort(loadings[latent_num, :])
+
+    @torch.no_grad()
+    def get_top_genes(self, top_num, loadingmatrix, latent_index, rnadata):
+        gene_index = self._argsort_geness(latent_index,  loadings=loadingmatrix)[-top_num : ]
+        gene_name = rnadata.var["gene_short_name"][gene_index]
+        return gene_name.tolist()
+
+
+        
+
 
