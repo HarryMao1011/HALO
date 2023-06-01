@@ -759,6 +759,12 @@ class HALOMASKVAE(BaseModuleClass):
     def get_scale_params(self):
         return [self.beta1, self.beta2, self.beta3, self.alpha]
 
+        
+    def _get_dict_sum(self, dictionary):
+        total = 0.0
+        for value in dictionary.values():
+            total += value
+        return total
 
     def loss(
         self,
@@ -967,8 +973,11 @@ class HALOMASKVAE(BaseModuleClass):
             nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64) + self.beta_1 * r2ascore_lagging.to(torch.float64)\
                   + self.beta_3 * a2r_r2a_score_loss + self.beta_2 * a2rscore_coupled_loss \
                      + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss
+            # nod_loss_copy = nod_loss.copy()
+            # nod_loss_copy  = nod_loss_copy.cpu()
+            # reconst_loss_copy = reconst_loss.copy()
 
-            
+            print("reconst_loss {}, nod_loss {}".format(reconst_loss, nod_loss))
             reconst_loss = reconst_loss + nod_loss * torch.ones_like(reconst_loss)
             if self.gates_finetune == True:
                 sparsity_regu = 0.01 * self.z_decoder_accessibility.get_gate_regu(z_acc)
@@ -978,8 +987,7 @@ class HALOMASKVAE(BaseModuleClass):
             kl_local_no_warmup = kl_divergence_l
             weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
             # print(" \n a2rscore_coupled {}, r2ascore_coupled {}, a2rscore_lagging {}, r2ascore_lagging {}".format(
-            #     a2rscore_coupled, r2ascore_coupled, a2rscore_lagging, r2ascore_lagging))
-
+            #      a2rscore_coupled, r2ascore_coupled, a2rscore_lagging, r2ascore_lagging))
             # print("nod_loss {}".format(nod_loss))
         
         loss = torch.mean(reconst_loss + weighted_kl_local)

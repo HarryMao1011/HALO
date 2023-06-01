@@ -88,6 +88,7 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         # n_input = self.summary_stats.n_vars
         n_labels = self.summary_stats.n_labels
         self.fine_tune = fine_tune
+        self.n_latent = n_latent
         print("fine tune is {}".format(fine_tune))
 
         # print("n_input {}, n_labels {}".format(n_input, n_labels))
@@ -128,7 +129,11 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
 
         ### store the enrichment information
         self.enrichments = dict()
-        # self.num_exo_features = 0
+        self.num_endog_features = 0
+        self.num_exog_features = 0
+        self.features = 0
+        self.highly_variable = 0
+        self.num_exo_features = 0
     
     def scheduled_train(self, epoch=400, batch_size=16):
         
@@ -434,8 +439,11 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         return  loadings
 
 
-    # def set_exognum(self, exo_num):
-    #     self.num_exo_features = exo_num
+
+    @torch.no_grad()
+    def get_atac_loading(self):
+        return self.get_atac_loading_global()
+
     @torch.no_grad()
     def get_atac_loading_global(
         self
@@ -498,15 +506,15 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         num_peaks = loadings.shape[1]
         if num_exo_features == None:
             num_exo_features = num_peaks
-        print("num of exo features {}".format(num_exo_features))
+        # print("num of exo features {}".format(num_exo_features))
         ## remaped exog_features
         module_idx = self._argsort_peaks(topic_num,  loadings=loadings)[-int(num_exo_features*top_quantile) : ]
         zeros_index = np.where(loadings[topic_num, :] <= 0.1)[0]
-        print("zeros index len {}".format(len(zeros_index)))
-        print("module_idx len before {}".format(len(module_idx)))
+        # print("zeros index len {}".format(len(zeros_index)))
+        # print("module_idx len before {}".format(len(module_idx)))
 
         module_idx = np.setdiff1d(module_idx, zeros_index)
-        print("module_idx len after {}".format(len(module_idx)))
+        # print("module_idx len after {}".format(len(module_idx)))
 
 
         pvals, test_statistics = [], []
@@ -525,7 +533,7 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
             if neither < 0:
                 neither = 0
             # print("tf_only {}, module_only {}, overlap {}, tf_hits {}".format(tf_only, module_only, overlap, tf_hits))
-            print("neither: {}".format(neither))
+            # print("neither: {}".format(neither))
 
 
             contingency_matrix = np.array([[overlap, module_only], [tf_only, neither]])
@@ -1256,15 +1264,81 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         sc.pp.filter_genes(adata_mvi, min_cells=int(adata_mvi.shape[0] * 0.01))
         return adata_mvi    
 
-    def _argsort_geness(self, latent_num, loadings):
+    def _argsort_genes(self, latent_num, loadings):
         
         return np.argsort(loadings[latent_num, :])
 
     @torch.no_grad()
-    def get_top_genes(self, top_num, loadingmatrix, latent_index, rnadata):
-        gene_index = self._argsort_geness(latent_index,  loadings=loadingmatrix)[-top_num : ]
-        gene_name = rnadata.var["gene_short_name"][gene_index]
+    def get_top_genes(self, top_num, loadingmatrix, latent_index, rnadata, colname = "gene_short_name"):
+        gene_index = self._argsort_genes(latent_index,  loadings=loadingmatrix)[-top_num : ]
+        if colname != "index":
+            gene_name = rnadata.var[colname][gene_index]
+        else:
+            gene_name = rnadata.var.index[gene_index]  
         return gene_name.tolist()
+
+
+    def rank_genes(self, latent_index, loadingmatrix, rnadata, colname="gene_short_name"):
+        '''
+        Ranks genes according to their activation in module `latent_num`. Sorted from least to most activated.
+        Parameters
+        ----------
+        latent_num : int
+            For which latent factors to rank genes
+        Returns
+        -------
+        np.ndarray: sorted array of gene names in order from most suppressed to most activated given the specified module
+        Examples
+        --------
+        Genes are ranked from least to most activated. To get the top genes:
+        .. code-block:: python
+            >>> rna_model.rank_genes(0)[-10:]
+            array(['ESRRG', 'APIP', 'RPGRIP1L', 'TM4SF4', 'DSCAM', 'NRAD1', 'ST3GAL1',
+            'LEPR', 'EXOC6', 'SLC44A5'], dtype=object)
+        '''
+        assert(isinstance(latent_index, int) and latent_index < 2 * self.n_latent and latent_index >= 0)
+        gene_index = self._argsort_genes(latent_index,  loadings=loadingmatrix)
+        gene_name = rnadata.var[colname][gene_index]
+
+        return gene_name
+
+
+    def rank_modules(self, gene, rnadata, loadings, colname="gene_short_name"):
+        '''
+        For a gene, rank how much its expression is activated by each module
+        Parameters
+        ----------
+        gene : str
+            Name of gene
+
+        rnadata: adata
+
+        colname: str
+            The column name of gene name in rnadata.var    
+    
+        Raises
+        ------
+        AssertionError: if **gene** is not in self.genes
+        
+        Returns
+        -------
+        list : of format [(topic_num, activation), ...]
+        Examples
+        --------
+        To see the top 5 modules associated with gene "GHRL":
+        .. code-block:: python
+            >>> rna_model.rank_modules('GHRL')[:5]
+            [(14, 3.375548), (22, 2.321417), (1, 2.3068447), (0, 1.780294), (9, 1.3936363)]
+        '''
+        genenames = rnadata.var[colname].tolist()
+        gene_idx = np.argwhere(genenames == gene)[0]
+
+        return list(sorted(zip(range(self.n_latent), np.argsort(loadings)[:, gene_idx].reshape(-1)), key = lambda x : -x[1]))
+
+
+    
+            
+
 
 
         

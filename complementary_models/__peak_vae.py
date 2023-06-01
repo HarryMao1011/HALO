@@ -994,10 +994,7 @@ class NeuralGateDecoder(torch.nn.Module):
 
 
     @torch.no_grad()
-    def get_loading_global_weights(self, inputs:torch.Tensor):
-
-        # loadings = self.calc_gates_repeat(inputs)
-        # loadings = torch.mul(self.output[0].weights.unsqueeze(0), loadings)
+    def get_loading_global_weights(self):
 
         w = self.output[0].fc_layers[0][0].weight.cpu().numpy()
         bn = self.output[0].fc_layers[0][1]
@@ -1007,9 +1004,6 @@ class NeuralGateDecoder(torch.nn.Module):
         b= b.cpu().numpy()
         bI = np.diag(b)
         loadings = np.matmul(bI, w)
-
-        # loadings = self.output[0].weights.unsqueeze(0)
-        # loadings = loadings.detach().cpu().numpy()
 
         return loadings
 
