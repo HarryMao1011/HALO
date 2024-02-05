@@ -25,8 +25,7 @@ from ._base_components import NeuralDecoderRNA as LinearDecoderSCVI
 # from scvi.module._peakvae import NeuralGateDecoder as GateDecoder 
 from scvi.module._peakvae import Decoder as DecoderPeakVI
 from .__peak_vae import NeuralGateDecoder as GateDecoder
-
-
+import torch.nn as nn
 
 from scvi.module import VAE 
 from torch.distributions import kl_divergence as kld
@@ -35,9 +34,53 @@ from .utils import torch_infer_nonsta_dir
 torch.backends.cudnn.benchmark = True
 
 
+class MLP(nn.Module):
+    """
+    A multilayer perceptron with ReLU activations and optional BatchNorm.
+    """
+
+    def __init__(self, sizes, heads=None, batch_norm=True, final_act=None):
+        super(MLP, self).__init__()
+        self.heads = heads
+        if heads is not None:
+            sizes[-1] = sizes[-1] * heads
+
+        layers = []
+        for s in range(len(sizes) - 1):
+            layers += [
+                nn.Linear(sizes[s], sizes[s + 1]),
+                nn.BatchNorm1d(sizes[s + 1])
+                if batch_norm and s < len(sizes) - 2
+                else None,
+                nn.ReLU()
+                if s < len(sizes) - 2
+                else None
+            ]
+        if final_act is None:
+            pass
+        elif final_act == "relu":
+            layers += [nn.ReLU()]
+        elif final_act == "sigmoid":
+            layers += [nn.Sigmoid()]
+        elif final_act == "softmax":
+            layers += [nn.Softmax(dim=-1)]
+        else:
+            raise ValueError("final_act not recognized")
+
+        layers = [l for l in layers if l is not None]
+
+        self.network = nn.Sequential(*layers)
+
+    def forward(self, x):
+        out = self.network(x)
+
+        if self.heads is not None:
+            out = out.view(*out.shape[:-1], -1, self.heads)
+        return out
+
 
 # HALOVAER model
-class HALOMASKVAE(BaseModuleClass):
+class HALOMASKVAE_ALN(BaseModuleClass):
     """
     Variational auto-encoder model.
 
@@ -135,6 +178,7 @@ class HALOMASKVAE(BaseModuleClass):
         use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
         use_size_factor_key: bool = False,
         use_observed_lib_size: bool = True,
+
         library_log_means: Optional[np.ndarray] = None,
         library_log_vars: Optional[np.ndarray] = None,
         var_activation: Optional[Callable] = None,
@@ -160,6 +204,7 @@ class HALOMASKVAE(BaseModuleClass):
         self.dispersion = dispersion
         self.n_latent = n_latent
         self.n_latent_dep = n_latent_dep
+        self.n_latent_indep = n_latent - n_latent_dep
         self.log_variational = log_variational
         self.gene_likelihood = gene_likelihood
         # Automatically deactivate if useless
@@ -333,6 +378,10 @@ class HALOMASKVAE(BaseModuleClass):
             use_batch_norm=use_batch_norm_decoder,
             bias=True,
         )
+        
+        self.decouple_aligner = MLP([self.n_latent_indep, 50, 100, 100, self.n_latent_indep],final_act="sigmoid")
+        self.couple_aligner = MLP([self.n_latent_dep, 50, 100, 100, self.n_latent_dep], final_act="sigmoid")
+        
 
     @torch.no_grad()
     def get_loadings(self) -> np.ndarray:
@@ -573,12 +622,19 @@ class HALOMASKVAE(BaseModuleClass):
         qzm_expr_indep = qzm_expr[:, self.n_latent_dep:]
         qzv_acc_indep = qzv_acc[:, self.n_latent_dep:]
         qzv_expr_indep = qzv_expr[:, self.n_latent_dep:]
-
+        
+        ## build the alignment and predicting from latent atac to latent gene
+        
+        pred_expr_dep_m =  self.couple_aligner(qzm_acc_dep)
+        pred_expr_indep_m =  self.decouple_aligner(qzm_acc_indep)
+        
         z_expr_dep = z[:, :self.n_latent_dep]
         z_expr_indep = z[:, self.n_latent_dep:]
 
         z_acc_dep = z_acc[:, :self.n_latent_dep]
         z_acc_indep = z_acc[:, self.n_latent_dep:]
+        
+        ## predict gene expression latent space from ATAC
 
 
         outputs = dict(z=z, 
@@ -607,6 +663,12 @@ class HALOMASKVAE(BaseModuleClass):
         qzv_expr_indep=qzv_expr_indep,
         qzm_acc_indep=qzm_acc_indep,
         qzv_acc_indep=qzv_acc_indep,
+        
+        ## aligned part
+        pred_expr_dep_m =  pred_expr_dep_m,
+        pred_expr_indep_m =  pred_expr_indep_m,
+                       
+        ## time                            
         time_key = time_index
 
         )
@@ -726,7 +788,10 @@ class HALOMASKVAE(BaseModuleClass):
             px=px,
             pl=pl,
             pz=pz,
-            pa = pa
+            pa = pa, 
+            px_scale=px_scale,
+            px_rate = px_rate,
+            px_r = px_r
         )
 
     def set_gates_finetune(self, gatesfine):
@@ -817,6 +882,14 @@ class HALOMASKVAE(BaseModuleClass):
         reconst_loss = 0
         weighted_kl_local = 0
 
+        ## get the aligned part
+        qzm_expr_dep=inference_outputs['qzm_expr_dep']
+        qzm_expr_indep=inference_outputs['qzm_expr_indep']
+        pred_expr_dep_m =  inference_outputs['pred_expr_dep_m']
+        pred_expr_indep_m =  inference_outputs['pred_expr_indep_m']
+        mse_loss = nn.MSELoss()
+        aligned_loss_dep = mse_loss(pred_expr_dep_m, qzm_expr_dep)
+        aligned_loss_indep = mse_loss(pred_expr_indep_m, qzm_expr_indep)
 
 
 
@@ -866,6 +939,12 @@ class HALOMASKVAE(BaseModuleClass):
             qzv_expr_dep=inference_outputs['qzv_expr_dep']
             qzm_acc_dep=inference_outputs['qzm_acc_dep']
             qzv_acc_dep=inference_outputs['qzv_acc_dep']
+            
+            
+            qzm_expr_indep=inference_outputs['qzm_expr_indep']
+            qzv_expr_indep=inference_outputs['qzv_expr_indep']
+            qzm_acc_indep=inference_outputs['qzm_acc_indep']
+            qzv_acc_indep=inference_outputs['qzv_acc_indep']
 
             # print("loss qzv_acc_dep type: {}".format(type(qzv_acc_dep)) )       
             ## lagging part 
@@ -878,18 +957,31 @@ class HALOMASKVAE(BaseModuleClass):
             Normal(qzm_expr_dep, qzv_expr_dep.sqrt()), Normal(qzm_acc_dep, qzv_acc_dep.sqrt())) + kld(
             Normal(qzm_acc_dep, qzv_acc_dep.sqrt()), Normal(qzm_expr_dep, qzv_expr_dep.sqrt()))
             kld_paired = kld_paired.sum(dim=1)
-
-            a2rscore_coupled, _, _ = torch_infer_nonsta_dir(z_acc_dep, z_expr_dep, time)
-            r2ascore_coupled, _, _ = torch_infer_nonsta_dir(z_expr_dep, z_acc_dep, time)
+            
+            ## use sampled
+            # a2rscore_coupled, _, _ = torch_infer_nonsta_dir(z_acc_dep, z_expr_dep, time)
+            # r2ascore_coupled, _, _ = torch_infer_nonsta_dir(z_expr_dep, z_acc_dep, time)
+            
+            ## use mean
+            a2rscore_coupled, _, _ = torch_infer_nonsta_dir(qzm_acc_dep, qzm_expr_dep, time)
+            r2ascore_coupled, _, _ = torch_infer_nonsta_dir(qzm_expr_dep, qzm_acc_dep, time)
+            
             # self.alpha=0.002
             a2rscore_coupled_loss = torch.maximum(self.alpha - a2rscore_coupled + 1e-3, torch.tensor(0))
             r2ascore_coupled_loss = torch.maximum(self.alpha - r2ascore_coupled + 1e-3, torch.tensor(0))
 
             a2rscore_coupled_loss = torch.maximum(self.alpha - a2rscore_coupled , torch.tensor(0))
             r2ascore_coupled_loss = torch.maximum(self.alpha - r2ascore_coupled, torch.tensor(0))
-
-            a2rscore_lagging, _, _ = torch_infer_nonsta_dir(z_acc_indep, z_expr_indep, time)
-            r2ascore_lagging, _, _ = torch_infer_nonsta_dir(z_expr_indep, z_acc_indep, time)
+            
+            ## we could use the mean to estimate the score
+            ## used sampled
+#             a2rscore_lagging, _, _ = torch_infer_nonsta_dir(z_acc_indep, z_expr_indep, time)
+#             r2ascore_lagging, _, _ = torch_infer_nonsta_dir(z_expr_indep, z_acc_indep, time)
+            
+            ## use mean
+            a2rscore_lagging, _, _ = torch_infer_nonsta_dir(qzm_acc_indep, qzm_expr_indep, time)
+            r2ascore_lagging, _, _ = torch_infer_nonsta_dir(qzm_expr_indep, qzm_acc_indep, time)
+            
 
             # a2r_r2a_score_loss =  torch.maximum(a2rscore_lagging-r2ascore_lagging+1e-4, torch.tensor(0))
             a2r_r2a_score_loss =  torch.maximum(a2rscore_lagging-r2ascore_lagging, torch.tensor(0))
@@ -897,16 +989,11 @@ class HALOMASKVAE(BaseModuleClass):
             r2ascore_decoupled_loss = torch.maximum(self.alpha - r2ascore_lagging, torch.tensor(0))
 
 
-
-
             # print(a2rscore_coupled, r2ascore_coupled, a2rscore_lagging, r2ascore_lagging)
 
             # self.beta_2 = 5e5
             # self.beta_3 = 1e8
             # self.beta_1 = 1e6
-            nod_loss = self.beta_1 *  a2rscore_lagging.to(torch.float64) + self.beta_1 * r2ascore_lagging.to(torch.float64)\
-                  + self.beta_3 * a2r_r2a_score_loss + self.beta_2 * a2rscore_coupled_loss \
-                     + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss
 
             nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64)  + self.beta_3 * a2r_r2a_score_loss + \
             self.beta_2 * a2rscore_coupled_loss + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss \
@@ -976,14 +1063,11 @@ class HALOMASKVAE(BaseModuleClass):
             nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64) + self.beta_1 * r2ascore_lagging.to(torch.float64)\
                   + self.beta_3 * a2r_r2a_score_loss + self.beta_2 * a2rscore_coupled_loss \
                      + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss
-            nod_loss_copy = nod_loss.clone().detach().cpu()
-            # # nod_loss_copy  = nod_loss_copy.cpu()
-            reconst_loss_copy = reconst_loss.clone().detach().cpu()
-            # print("nod_loss {:.2E}".format(nod_loss))
+            # nod_loss_copy = nod_loss.copy()
+            # nod_loss_copy  = nod_loss_copy.cpu()
+            # reconst_loss_copy = reconst_loss.copy()
 
             # print("reconst_loss {}, nod_loss {}".format(reconst_loss, nod_loss))
-            print("reconst_loss {:.2E}, nod_loss {:.2E}".format(torch.mean(reconst_loss_copy),nod_loss_copy))
-
             reconst_loss = reconst_loss + nod_loss * torch.ones_like(reconst_loss)
             if self.gates_finetune == True:
                 sparsity_regu = 0.01 * self.z_decoder_accessibility.get_gate_regu(z_acc)
@@ -992,11 +1076,8 @@ class HALOMASKVAE(BaseModuleClass):
             kl_local_for_warmup = kl_divergence_z + kl_divergence_acc + kld_paired
             kl_local_no_warmup = kl_divergence_l
             weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
-            # print(" \n a2rscore_coupled {}, r2ascore_coupled {}, a2rscore_lagging {}, r2ascore_lagging {}".format(
-            #      a2rscore_coupled, r2ascore_coupled, a2rscore_lagging, r2ascore_lagging))
-            # print("nod_loss {}".format(nod_loss))
         
-        loss = torch.mean(reconst_loss + weighted_kl_local)
+        loss = torch.mean(reconst_loss + weighted_kl_local + aligned_loss_dep + aligned_loss_indep)
 
         kl_local = dict(
             kl_divergence_l=kl_divergence_l, kl_divergence_z=kl_divergence_z
@@ -1015,6 +1096,7 @@ class HALOMASKVAE(BaseModuleClass):
         self,
         tensors,
         n_samples=1,
+        use_z_mean = False,
         library_size=1,
     ) -> np.ndarray:
         """
@@ -1037,10 +1119,13 @@ class HALOMASKVAE(BaseModuleClass):
             tensor with shape (n_cells, n_genes, n_samples)
         """
         inference_kwargs = dict(n_samples=n_samples)
+        generative_kwargs=dict(use_z_mean=use_z_mean),
         _, generative_outputs, = self.forward(
             tensors,
             inference_kwargs=inference_kwargs,
             compute_loss=False,
+            generative_kwargs=generative_kwargs
+
         )
 
         dist = generative_outputs["px"]

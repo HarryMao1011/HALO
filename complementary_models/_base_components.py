@@ -525,6 +525,18 @@ class NeuralDecoderRNA(nn.Module):
             bias=bias,
             dropout_rate=0,
         )
+
+        # self.px_r_decoder = FCLayers(
+        #     n_in=n_input,
+        #     n_out=n_output,
+        #     n_cat_list=n_cat_list,
+        #     n_layers=1,
+        #     use_activation=False,
+        #     use_batch_norm=use_batch_norm,
+        #     use_layer_norm=use_layer_norm,
+        #     bias=bias,
+        #     dropout_rate=0,
+        # )
     
         # dropout
         self.px_dropout_decoder = FCLayers(
@@ -550,6 +562,16 @@ class NeuralDecoderRNA(nn.Module):
         return results
 
 
+    ###
+    # #  px_scale, px_r, px_rate, px_dropout = self.decoder(
+    #         self.dispersion,
+    #         decoder_input,
+    #         size_factor,
+    #         batch_index,
+    #         *categorical_input,
+    #         y,
+    #     )    
+
     def forward(
         self, dispersion: str, z: torch.Tensor, library: torch.Tensor, *cat_list: int
     ):
@@ -560,6 +582,7 @@ class NeuralDecoderRNA(nn.Module):
         px_scale = torch.softmax(raw_px_scale, dim=-1)
         px_dropout = self.px_dropout_decoder(z, *cat_list)
         px_rate = torch.exp(library) * px_scale
+        # px_r = self.px_r_decoder(z_feat, *cat_list)
         px_r = None
 
         return px_scale, px_r, px_rate, px_dropout

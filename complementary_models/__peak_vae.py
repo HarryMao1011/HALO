@@ -63,18 +63,18 @@ class Decoder(torch.nn.Module):
         deep_inject_covariates: bool = False,
     ):
         super().__init__()
-        self.px_decoder = FCLayers(
-            n_in=n_input,
-            n_out=n_hidden,
-            n_cat_list=n_cat_list,
-            n_layers=n_layers,
-            n_hidden=n_hidden,
-            dropout_rate=0,
-            activation_fn=torch.nn.LeakyReLU,
-            use_batch_norm=use_batch_norm,
-            use_layer_norm=use_layer_norm,
-            inject_covariates=deep_inject_covariates,
-        )
+        # self.px_decoder = FCLayers(
+        #     n_in=n_input,
+        #     n_out=n_hidden,
+        #     n_cat_list=n_cat_list,
+        #     n_layers=n_layers,
+        #     n_hidden=n_hidden,
+        #     dropout_rate=0,
+        #     activation_fn=torch.nn.LeakyReLU,
+        #     use_batch_norm=use_batch_norm,
+        #     use_layer_norm=use_layer_norm,
+        #     inject_covariates=deep_inject_covariates,
+        # )
         self.output = torch.nn.Sequential(
             torch.nn.Linear(n_hidden, n_output), torch.nn.Sigmoid()
         )

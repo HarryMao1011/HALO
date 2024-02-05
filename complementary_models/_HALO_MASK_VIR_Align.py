@@ -6,6 +6,7 @@ from scipy.sparse import csr_matrix
 import scvi
 from .REGISTRY_KEYS import REGISTRY_KEYS
 from scvi._compat import Literal
+# from scvi.typing import Literal
 # from scvi._types import LatentDataType
 from scvi.data import AnnDataManager
 from scvi.data.fields import (
@@ -25,7 +26,7 @@ from scvi.model.base import ArchesMixin, RNASeqMixin, VAEMixin, BaseModelClass
 import torch
 logger = logging.getLogger(__name__)
 import numpy as np
-from ._HALO_MASK_VAE import HALOMASKVAE
+from ._HALO_MASK_VAE_Align import HALOMASKVAE_ALN as HALOMASKVAE
 from typing import Dict, Iterable, List, Optional, Sequence, Union
 import pandas as pd
 from scvi._types import Number
@@ -44,13 +45,13 @@ from functools import partial
 from scvi.model.base._utils import _de_core
 from tqdm.auto import tqdm
 from scipy.stats import fisher_exact
-import tools.adata_interface.core as adi
-import tools.adata_interface.regulators as ri
+import tools.adata_interface.core as adi 
+import tools.adata_interface.regulators as ri 
 from  tools.plots.factor_influence_plot import plot_factor_influence
 logger = logging.getLogger(__name__)
 import scanpy as sc
 
-class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin, BaseModelClass):
+class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin, BaseModelClass):
     def __init__(
         self,
         adata: AnnData,
@@ -67,7 +68,7 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         fine_tune = False,
         **model_kwargs,
     ):
-        super(HALOMASKVIR, self).__init__(adata)
+        super(HALOMASKVIR_ALN, self).__init__(adata)
         n_cats_per_cov = (
             self.adata_manager.get_state_registry(
                 REGISTRY_KEYS.CAT_COVS_KEY
@@ -84,13 +85,13 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
             library_log_means, library_log_vars = _init_library_size(
                 self.adata_manager, n_batch
             )
-        print("n_genes :{}".format(n_genes))
-        print("n_peaks:{}".format(n_regions))
+        # print("n_genes :{}".format(n_genes))
         # n_input = self.summary_stats.n_vars
         n_labels = self.summary_stats.n_labels
         self.fine_tune = fine_tune
         self.n_latent = n_latent
-        print("fine tune is {}".format(fine_tune))
+        self.n_genes = n_genes
+        # print("fine tune is {}".format(fine_tune))
 
         # print("n_input {}, n_labels {}".format(n_input, n_labels))
         self.module = HALOMASKVAE(
@@ -663,7 +664,7 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
             pval_threshold = pval_threshold, hue = hue, hue_order = hue_order, 
             palette = palette, legend_label = legend_label, show_legend = show_legend, label_closeness = label_closeness, 
             na_color = na_color, max_label_repeats = max_label_repeats, figsize=figsize,
-            axlabels = ('Latent {} Enrichments'.format(str(topic_1)),'Latent {} Enrichments'.format(str(topic_2))), 
+            axlabels = ('Topic {} Enrichments'.format(str(topic_1)),'Todule {} Enrichments'.format(str(topic_2))), 
             fontsize = fontsize, color = color)    
 
 
@@ -772,15 +773,15 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
 
         imputed = []
         for tensors in post:
-            get_generative_input_kwargs = dict(transform_batch=transform_batch[0])
-            generative_kwargs = dict(use_z_mean=use_z_mean)
+            # get_generative_input_kwargs = dict(transform_batch=transform_batch[0])
+            # generative_kwargs = dict(use_z_mean=use_z_mean)
             inference_outputs, generative_outputs = self.module.forward(
                 tensors=tensors,
-                get_generative_input_kwargs=get_generative_input_kwargs,
-                generative_kwargs=generative_kwargs,
+                # get_generative_input_kwargs=get_generative_input_kwargs,
+                # generative_kwargs=generative_kwargs,
                 compute_loss=False,
             )
-            p = generative_outputs["p"].cpu()
+            p = generative_outputs["pa"].cpu()
 
             if normalize_cells:
                 p *= inference_outputs["libsize_acc"].cpu()
@@ -1109,39 +1110,116 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         return result
 
 
+    def plot_compare_topic_enrichments(self, topic_1, topic_2, factor_type = 'motifs', 
+        label_factors = None, hue = None, palette = 'coolwarm', hue_order = None, 
+        ax = None, figsize = (8,8), legend_label = '', show_legend = True, fontsize = 13, 
+        pval_threshold = (1e-50, 1e-50), na_color = 'lightgrey',
+        color = 'grey', label_closeness = 3, max_label_repeats = 3, show_factor_ids = False):
+        '''
+        It is often useful to contrast topic enrichments in order to
+        understand which factors' influence is unique to certain
+        cell states. Topics may be enriched for constitutively-active
+        transcription factors, so comparing two similar topics to find
+        the factors that are unique to each elucidates the dynamic
+        aspects of regulation between states.
+        This function contrasts the enrichments of two topics.
+        Parameters
+        ----------
+        topic1, topic2 : int
+            Which topics to compare.
+        factor_type : str, 'motifs' or 'chip', default = 'motifs'
+            Which factor type to use for enrichment.
+        label_factors : list[str], np.ndarray[str], None; default=None
+            List of factors to label. If not provided, will label all
+            factors that meet the p-value thresholds.
+        hue : dict[str : {str, float}] or None
+            If provided, colors the factors on the plot. The keys of the dict
+            must be the names of transcription factors, and the values are
+            the associated data to map to colors. The values may be 
+            categorical, e.g. cluster labels, or scalar, e.g. expression
+            values. TFs not provided in the dict are colored as *na_color*.
+        palette : str, list[str], or None; default = None
+            Palette of plot. Default of None will set `palette` to the style-specific default.
+        hue_order : list[str] or None, default = None
+            Order to assign hues to features provided by `data`. Works similarly to
+            hue_order in seaborn. User must provide list of features corresponding to 
+            the order of hue assignment. 
+        ax : matplotlib.pyplot.axes, deafult = None
+            Provide axes object to function to add streamplot to a subplot composition,
+            et cetera. If no axes are provided, they are created internally.
+        figsize : tuple(float, float), default = (8,8)
+            Size of figure
+        legend_label : str, None
+            Label for legend.
+        show_legend : boolean, default=True
+            Show figure legend.
+        fontsize : int>0, default=13
+            Fontsize of TF labels on plot.
+        pval_threshold : tuple[float, float], default=(1e-50, 1e-50)
+            Threshold below with TFs will not be labeled on plot. The first and
+            second positions relate p-value with respect to topic 1 and topic 2.
+        na_color : str, default='lightgrey'
+            Color for TFs with no provided *hue*
+        color : str, default='grey'
+            If *hue* not provided, colors all points on plot this color.
+        label_closeness : int>0, default=3
+            Closeness of TF labels to points on plot. When *label_closeness* is high,
+            labels are forced to be very close to points.
+        max_label_repeats : boolean, default=3
+            Some TFs have multiple ChIP samples or Motif PWMs. For these factors,
+            label the top *max_label_repeats* examples. This prevents clutter when
+            many samples for the same TF are close together. The rank of the sample
+            for each TF is shown in the label as "<TF name> (<rank>)".
+        Returns
+        -------
+        matplotlib.pyplot.axes
+        Examples
+        --------
+        .. code-block :: python
+            >>> label = ['LEF1','HOXC13','MEOX2','DLX3','BACH2','RUNX1', 'SMAD2::SMAD3']
+            >>> atac_model.plot_compare_topic_enrichments(23, 17,
+            ...     label_factors = label, 
+            ...     color = 'lightgrey',
+            ...     fontsize=20, label_closeness=5, 
+            ... )
+        .. image:: /_static/mira.topics.AccessibilityModel.plot_compare_topic_enrichments.svg
+            :width: 300
+        '''
+
+        m1 = self.get_enrichments(topic_1, factor_type)
+        m2 = self.get_enrichments(topic_2, factor_type)        
+        
+        return plot_factor_influence(m1, m2, ax = ax, label_factors = label_factors,
+            pval_threshold = pval_threshold, hue = hue, hue_order = hue_order, 
+            palette = palette, legend_label = legend_label, show_legend = show_legend, label_closeness = label_closeness, 
+            na_color = na_color, max_label_repeats = max_label_repeats, figsize=figsize,
+            axlabels = ('Topic {} Enrichments'.format(str(topic_1)),'Todule {} Enrichments'.format(str(topic_2))), 
+            fontsize = fontsize, color = color) 
 
 
     def get_rna_loading(self):
         return self.module.get_loadings()         
 
-    def get_rna_decoupled_score(self, rnaloading, rnadata):
+    def get_rna_decoupled_score(self, rnaloading, rnadata, couple_dim=10):
         
         genes_num = rnaloading.shape[1]
         decouple_scores = []
         couple_scores = []
 
         for i in range(genes_num):
-            couple_latent = rnaloading[:5, i]
-            decouple_latent = rnaloading[5:,i]
-            decouplescore = np.abs(np.mean(decouple_latent, axis=0))
-            couplescore = np.abs(np.mean(couple_latent, axis=0))
-            decouple_scores.append(decouplescore)
-            couple_scores.append(couplescore)
-
-        #     if np.max(couple_latent) >= np.max(decouple_latent) and np.min(couple_latent) >= np.min(decouple_latent) and np.min(couple_latent)>0:
-        #         type_dict.append("coupled")
-
-        #     elif np.max(decouple_latent) >= np.max(couple_latent) and np.min(decouple_latent) >= np.min(couple_latent) and np.min(decouple_latent)>0:
-        #         type_dict.append("decoupled")
-        #     else:
-        #         type_dict.append("neither")
-
-        # type_dict = np.array(type_dict)
+            couple_latent = rnaloading[:couple_dim, i]
+            decouple_latent = rnaloading[couple_dim:,i]
+            decouplescore = np.abs(np.sum(decouple_latent[decouple_latent>0], axis=0))
+            couplescore = np.abs(np.sum(couple_latent[couple_latent>0], axis=0))
+            decouplescore_norm = decouplescore / (couplescore + decouplescore)
+            couplescore_norm = couplescore / (couplescore + decouplescore)
+            decouple_scores.append(decouplescore_norm)
+            couple_scores.append(couplescore_norm)
 
         couple_scores = np.array(couple_scores)
         decouple_scores = np.array(decouple_scores)
         rnadata.var["decouple_score"] = decouple_scores
-        rnadata.var["couple_socre"] = couple_scores
+        rnadata.var["couple_score"] = couple_scores
 
         return couple_scores, decouple_scores
 

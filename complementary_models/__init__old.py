@@ -18,5 +18,3 @@ from ._HALO_MASK_VAE import HALOMASKVAE
 from ._HALO_MASK_VIR import HALOMASKVIR
 from ._base_components import NeuralDecoderRNA
 from .__peak_vae import NeuralGateDecoder
-from ._HALO_MASK_VAE_Align import HALOMASKVAE_ALN
-from ._HALO_MASK_VIR_Align import HALOMASKVIR_ALN
