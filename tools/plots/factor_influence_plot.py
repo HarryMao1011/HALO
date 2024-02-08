@@ -119,6 +119,8 @@ def _influence_plot(ax, l1_pvals, l2_pvals, factor_names, pval_threshold = (1e-5
     #ax.axis('square')
     plt.tight_layout()
 
+    plt.savefig('./motif_enrichment.pdf',format = 'pdf')
+
     return ax
 
 
@@ -129,7 +131,7 @@ def plot_factor_influence(
     color = 'lightgrey', label_closeness = 3, max_label_repeats = 3, show_factor_ids = False,
     ax = None, axlabels = ('list1', 'list2'), pval_pseudocount = 1e-300,
 ):
-
+ 
     if ax is None:
         fig, ax = plt.subplots(1,1,figsize = figsize)
 

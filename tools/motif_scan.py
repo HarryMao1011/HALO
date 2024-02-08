@@ -134,11 +134,14 @@ def get_motif_hits(peak_sequences_file, num_peaks, species="mouse", pvalue_thres
         motifs_directory = PWM_DIR_MOUSE
     elif species=="human":
         motifs_directory = PWM_DIR_HUMAN
+    elif species=="all":
+        motifs_directory = os.path.join(mira_dir, 'motifs/human_mouse/' )
 
     matrix_list = [
         os.path.basename(x) for x in
         glob(os.path.join(motifs_directory, '*.{}'.format(PWM_suffix)))
     ]
+
 
     command = ['moods-dna.py', 
         '-m', *matrix_list, 
