@@ -158,11 +158,12 @@ class FCLayers(nn.Module):
 
         """
         one_hot_cat_list = []  # for generality in this list many indices useless.
-
+        # print("self.n_cat_list {}, cat_list {}".format(self.n_cat_list, cat_list)) 
         if len(self.n_cat_list) > len(cat_list):
             raise ValueError(
                 "nb. categorical args provided doesn't match init. params."
             )
+        # print(self.n_cat_list, cat_list)    
         for n_cat, cat in zip(self.n_cat_list, cat_list):
             if n_cat and cat is None:
                 raise ValueError("cat not provided while n_cat != 0 in init. params.")

@@ -916,9 +916,9 @@ class NeuralGateDecoder(torch.nn.Module):
             nn.Softmax(dim=-1))
 
  
-        print("gate decoder initialization n_input {}, n_output {}, \
-        n_hidden_local {}, n_hidden_global {}, n_cat_list {}, *cat_list {}".format(self.n_input, self.n_output, \
-            self.n_hidden_local, self.n_hidden_global, n_cat_list, *n_cat_list))
+        # print("gate decoder initialization n_input {}, n_output {}, \
+        # n_hidden_local {}, n_hidden_global {}, n_cat_list {}, *cat_list {}".format(self.n_input, self.n_output, \
+        #     self.n_hidden_local, self.n_hidden_global, n_cat_list, *n_cat_list))
 
        
     def calc_feature_outputs(self, inputs, *cat_list: int):

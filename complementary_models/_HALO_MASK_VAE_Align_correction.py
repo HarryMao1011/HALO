@@ -1,5 +1,5 @@
 """Main module."""
-from typing import Callable, Iterable, Optional
+from typing import Callable, Iterable, Optional,Dict
 
 import numpy as np
 import torch
@@ -14,11 +14,10 @@ from typing import List, Optional
 
 from anndata import AnnData
 from scipy.sparse import csr_matrix
-
+from scvi.module import MULTIVAE
 from scvi._compat import Literal
 from scvi.distributions import NegativeBinomial, Poisson, ZeroInflatedNegativeBinomial
 from scvi.module.base import  LossRecorder, auto_move_data, BaseModuleClass
-# from scvi.nn import DecoderSCVI, Encoder, LinearDecoderSCVI, one_hot
 from scvi.nn import DecoderSCVI, Encoder, one_hot
 from ._base_components import NeuralDecoderRNA as LinearDecoderSCVI
 # from scvi.nn import NeuralDecoderRNA as LinearDecoderSCVI
@@ -154,6 +153,7 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         n_input_genes: int,
         n_input_regions:int,
         n_batch: int = 0,
+        gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
         n_labels: int = 0,
         n_hidden: int = 128,
         n_latent: int = 10,
@@ -170,9 +170,8 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         region_factors: bool = True,
         dispersion: str = "gene",
         log_variational: bool = True,
-        gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
         latent_distribution: str = "normal",
-        encode_covariates: bool = True,
+        encode_covariates: bool = False,
         deeply_inject_covariates: bool = True,
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
         use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
@@ -185,6 +184,7 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         expr_train: Optional[bool] = True,
         acc_train: Optional[bool] = False,
         finetune: Optional[int] = 0,
+
         alpha: Optional[float] = 0.002,
         beta1: Optional[float] = 1e6,
         beta2: Optional[float] = 5e5,
@@ -196,6 +196,8 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         super().__init__()
     
         self.n_input_regions = n_input_regions
+        self.n_input_genes = n_input_genes
+
         self.region_factors = None
         if region_factors:
             self.region_factors = torch.nn.Parameter(torch.zeros(self.n_input_regions))        
@@ -206,17 +208,21 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         self.n_latent_dep = n_latent_dep
         self.n_latent_indep = n_latent - n_latent_dep
         self.log_variational = log_variational
-        self.gene_likelihood = gene_likelihood
+        
+        
         # Automatically deactivate if useless
         self.n_batch = n_batch
+        self.gene_likelihood = gene_likelihood
         self.n_labels = n_labels
-  
+        self.n_cats_per_cov = n_cats_per_cov
+        self.n_continuous_cov = n_continuous_cov
         self.alpha = alpha
-
+        
         self.latent_distribution = latent_distribution
         self.encode_covariates = encode_covariates
         self.gates_finetune = gates_finetune
 
+        print("VAE model categorical variables : {}".format(self.n_cats_per_cov))
         ##### add hidden_common numbers
         self.n_hidden_common = (
             int(np.sqrt(self.n_input_regions + self.n_input_genes))
@@ -279,10 +285,20 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         self.use_batch_norm_linear = use_batch_norm_decoder
         # z encoder goes from the n_input-dimensional data to an n_latent-d
         # latent space representation
+        
         n_input_encoder = n_input_genes + n_continuous_cov * encode_covariates
-        cat_list = [n_batch] + list([] if n_cats_per_cov is None else n_cats_per_cov)
+        n_input_encoder_acc = (
+            self.n_input_regions + n_continuous_cov * encode_covariates
+        )
+        n_input_encoder_exp = self.n_input_genes + n_continuous_cov * encode_covariates
+        
+        
+        cat_list = [n_batch] + list([] if n_cats_per_cov is None else torch.tensor(n_cats_per_cov))
+
         encoder_cat_list = cat_list if encode_covariates else None
-        # print("n_input_encoder: {}".format(n_input_encoder))
+        print("n_batch {}".format(n_batch))
+        print("encoder_cat_list: {}".format(encoder_cat_list))
+        print("cat_list ", cat_list)
         self.z_encoder = Encoder(
             n_input_encoder,
             n_latent,
@@ -320,7 +336,7 @@ class HALOMASKVAE_ALN(BaseModuleClass):
             n_input=self.n_latent + n_continuous_cov,
             n_output=n_input_regions,
             n_hidden_global=self.n_hidden_common,
-            n_cat_list=cat_list,
+            n_cat_list=encoder_cat_list,
             n_layers=self.n_layers_decoder,
             use_batch_norm=use_batch_norm_decoder,
             use_layer_norm=use_layer_norm_decoder,
@@ -374,7 +390,7 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         self.decoder = LinearDecoderSCVI(
             n_input_decoder,
             n_input_genes,
-            n_cat_list=cat_list,
+            n_cat_list=encoder_cat_list,
             use_batch_norm=use_batch_norm_decoder,
             bias=True,
         )
@@ -414,9 +430,15 @@ class HALOMASKVAE_ALN(BaseModuleClass):
 
         cat_key = REGISTRY_KEYS.CAT_COVS_KEY
         cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
-
+        # print("batch_index {}".format(batch_index))
+        # print("categorical_input: {}".format(cat_covs))      
+        
         input_dict = dict(
-            x=x, batch_index=batch_index, cont_covs=cont_covs, cat_covs=cat_covs, time_index = time_index
+            x=x, 
+            batch_index=batch_index, 
+            cont_covs=cont_covs, 
+            cat_covs=cat_covs, 
+            time_index = time_index
         )
         return input_dict
 
@@ -425,43 +447,7 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         RNA generative input
         
         """
-        # if self.gates_finetune:
-        #     with torch.no_grad():
-        #         z = inference_outputs["z"]
-        #         library = inference_outputs["library"]
-        #         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
-        #         y = tensors[REGISTRY_KEYS.LABELS_KEY]
-                
-
-        #         cont_key = REGISTRY_KEYS.CONT_COVS_KEY
-        #         cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
-
-        #         cat_key = REGISTRY_KEYS.CAT_COVS_KEY
-        #         cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
-
-
-        #         size_factor_key = REGISTRY_KEYS.SIZE_FACTOR_KEY
-        #         size_factor = (
-        #             torch.log(tensors[size_factor_key])
-        #             if size_factor_key in tensors.keys()
-        #             else None
-        #         )
-
-        #         """
-                
-        #         ATAC genreative input
-                
-                
-        #         """
-        #         z_acc = inference_outputs["z_acc"]
-
-        #         qz_acc = inference_outputs["qz_acc"]
-
-        #         libsize_acc = inference_outputs["libsize_acc"]
-
-
-        # else:
-
+        
         z = inference_outputs["z"]
         library = inference_outputs["library"]
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
@@ -527,7 +513,14 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         return local_library_log_means, local_library_log_vars
 
     @auto_move_data
-    def inference(self, x, batch_index, cont_covs=None, cat_covs=None, time_index=None, n_samples=1):
+    def inference(
+        self, 
+        x, 
+        batch_index, 
+        cont_covs, 
+        cat_covs, 
+        time_index, 
+        n_samples=1) -> Dict[str, torch.Tensor]:
         """
         High level inference method.
 
@@ -546,7 +539,6 @@ class HALOMASKVAE_ALN(BaseModuleClass):
             library = torch.log(x_rna.sum(1)).unsqueeze(1)
         if self.log_variational:
             x_ = torch.log(1 + x_)
-        # print("x_ shape {}".format(x_.shape))
         if cont_covs is not None and self.encode_covariates:
             encoder_input = torch.cat((x_, cont_covs), dim=-1)
         else:
@@ -555,9 +547,12 @@ class HALOMASKVAE_ALN(BaseModuleClass):
             categorical_input = torch.split(cat_covs, 1, dim=1)
         else:
             categorical_input = tuple()
-        # print("encoder shape {}".format(encoder_input.shape)) 
+        # 
+        # 
+        # print("categorical_input: {}".format(categorical_input))
    
         qz, z = self.z_encoder(encoder_input, batch_index, *categorical_input)
+        # print("finished RNA z encoder")
         ql = None
 
         if not self.use_observed_lib_size:
@@ -595,10 +590,12 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         libsize_acc = self.l_encoder_accessibility(
             encoder_input_accessibility, batch_index, *categorical_input
         )
+        # print("finished library z encoder")
 
         qz_acc, z_acc = self.z_encoder_accessibility(
             encoder_input_accessibility, batch_index, *categorical_input
         )
+        # print("finished library ATAC encoder")
 
         if n_samples > 1:
             untran_za = qz_acc.sample((n_samples,))
@@ -713,7 +710,8 @@ class HALOMASKVAE_ALN(BaseModuleClass):
 
         if not self.use_size_factor_key:
             size_factor = library
-
+        # print("starting RNA decoder")
+        # print("batch_index: {}".format(batch_index))
         px_scale, px_r, px_rate, px_dropout = self.decoder(
             self.dispersion,
             decoder_input,
@@ -722,6 +720,9 @@ class HALOMASKVAE_ALN(BaseModuleClass):
             *categorical_input,
             y,
         )
+        # print("finished RNA decoder")
+
+
         if self.dispersion == "gene-label":
             px_r = F.linear(
                 one_hot(y, self.n_labels), self.px_r
@@ -782,7 +783,11 @@ class HALOMASKVAE_ALN(BaseModuleClass):
             decoder_input_acc = torch.cat([decoder_input_acc, cont_covs], dim=-1)
 
         # Accessibility Decoder
+        # print("starting ATAC decoder")
+
         pa = self.z_decoder_accessibility(decoder_input_acc, batch_index, *categorical_input)
+        # print("finished ATAC decoder")
+
 
         return dict(
             px=px,

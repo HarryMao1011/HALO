@@ -210,7 +210,9 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         # Automatically deactivate if useless
         self.n_batch = n_batch
         self.n_labels = n_labels
-  
+        self.n_cats_per_cov = n_cats_per_cov
+        print("n_cats_per_cov:", n_cats_per_cov)
+        self.n_continuous_cov = n_continuous_cov
         self.alpha = alpha
 
         self.latent_distribution = latent_distribution
@@ -280,7 +282,16 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         # z encoder goes from the n_input-dimensional data to an n_latent-d
         # latent space representation
         n_input_encoder = n_input_genes + n_continuous_cov * encode_covariates
-        cat_list = [n_batch] + list([] if n_cats_per_cov is None else n_cats_per_cov)
+        # cat_list = [n_batch] + list([] if n_cats_per_cov is None else n_cats_per_cov)
+        n_input_encoder_acc = (
+            self.n_input_regions + n_continuous_cov * encode_covariates
+        )
+        n_input_encoder_exp = self.n_input_genes + n_continuous_cov * encode_covariates
+        
+        cat_list = (
+            [n_batch] + list(n_cats_per_cov) if n_cats_per_cov is not None else []
+        )
+        
         encoder_cat_list = cat_list if encode_covariates else None
         # print("n_input_encoder: {}".format(n_input_encoder))
         self.z_encoder = Encoder(
