@@ -18,8 +18,13 @@ from scvi.module import MULTIVAE
 from scvi._compat import Literal
 from scvi.distributions import NegativeBinomial, Poisson, ZeroInflatedNegativeBinomial
 from scvi.module.base import  LossRecorder, auto_move_data, BaseModuleClass
+# from scvi.nn import DecoderSCVI, Encoder, one_hot, LinearDecoderSCVI
 from scvi.nn import DecoderSCVI, Encoder, one_hot
+
 from ._base_components import NeuralDecoderRNA as LinearDecoderSCVI
+# from ._base_components import  LinearDecoderSCVI
+# from scvi.nn import DecoderSCVI as LinearDecoderSCVI
+
 # from scvi.nn import NeuralDecoderRNA as LinearDecoderSCVI
 # from scvi.module._peakvae import NeuralGateDecoder as GateDecoder 
 from scvi.module._peakvae import Decoder as DecoderPeakVI
@@ -152,7 +157,7 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         self,
         n_input_genes: int,
         n_input_regions:int,
-        n_batch: int = 0,
+        n_batch: int = None,
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
         n_labels: int = 0,
         n_hidden: int = 128,
@@ -222,7 +227,7 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         self.encode_covariates = encode_covariates
         self.gates_finetune = gates_finetune
 
-        print("VAE model categorical variables : {}".format(self.n_cats_per_cov))
+        # print("VAE model categorical variables : {}".format(self.n_cats_per_cov))
         ##### add hidden_common numbers
         self.n_hidden_common = (
             int(np.sqrt(self.n_input_regions + self.n_input_genes))
@@ -296,9 +301,9 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         cat_list = [n_batch] + list([] if n_cats_per_cov is None else torch.tensor(n_cats_per_cov))
 
         encoder_cat_list = cat_list if encode_covariates else None
-        print("n_batch {}".format(n_batch))
-        print("encoder_cat_list: {}".format(encoder_cat_list))
-        print("cat_list ", cat_list)
+        # print("n_batch {}".format(n_batch))
+        # print("encoder_cat_list: {}".format(encoder_cat_list))
+        # print("cat_list ", cat_list)
         self.z_encoder = Encoder(
             n_input_encoder,
             n_latent,
@@ -375,10 +380,48 @@ class HALOMASKVAE_ALN(BaseModuleClass):
 
         # decoder goes from n_latent-dimensional space to n_input-d data
         n_input_decoder = n_latent + n_continuous_cov
-        # self.decoder = DecoderSCVI(
+        # self.decoder = LinearDecoderSCVI(
         #     n_input_decoder,
         #     n_input_genes,
         #     n_cat_list=cat_list,
+        #     n_layers=1,
+        #     n_hidden_local=68,
+        #     bias=True
+
+        # )
+        if n_batch==1:
+            self.decoder = LinearDecoderSCVI(
+            n_input_decoder,
+            n_input_genes,
+            n_cat_list=encoder_cat_list,
+            use_batch_norm=use_batch_norm,
+            use_layer_norm=False,
+            bias=True,
+        )
+        elif n_batch>1: 
+            self.decoder = LinearDecoderSCVI(
+                n_input_decoder,
+                n_input_genes,
+                n_cat_list=[n_batch],
+                use_batch_norm=use_batch_norm,
+                use_layer_norm=False,
+                bias=True,
+            )
+
+
+        # self.decoder = LinearDecoderSCVI(
+        #     n_input_decoder,
+        #     n_input_genes,
+        #     n_cat_list=encoder_cat_list,
+        #     use_batch_norm=use_batch_norm_decoder,
+        #     bias=True,
+        # )
+
+        ## scVI decoder test
+        # self.decoder = LinearDecoderSCVI(
+        #     n_input_decoder,
+        #     n_input_genes,
+        #     n_cat_list=encoder_cat_list,
         #     n_layers=n_layers,
         #     n_hidden=n_hidden,
         #     inject_covariates=deeply_inject_covariates,
@@ -386,14 +429,6 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         #     use_layer_norm=use_layer_norm_decoder,
         #     scale_activation="softplus" if use_size_factor_key else "softmax",
         # )
-
-        self.decoder = LinearDecoderSCVI(
-            n_input_decoder,
-            n_input_genes,
-            n_cat_list=encoder_cat_list,
-            use_batch_norm=use_batch_norm_decoder,
-            bias=True,
-        )
         
         self.decouple_aligner = MLP([self.n_latent_indep, 50, 100, 100, self.n_latent_indep],final_act="sigmoid")
         self.couple_aligner = MLP([self.n_latent_dep, 50, 100, 100, self.n_latent_dep], final_act="sigmoid")
@@ -935,6 +970,10 @@ class HALOMASKVAE_ALN(BaseModuleClass):
             # sparsity_regu = 0.1 * self.z_decoder_accessibility.get_gate_regu()
             # reconst_loss += sparsity_regu
             # weighted_kl_local += sparsity_regu
+        else:
+            kl_local_for_warmup = kl_divergence_z
+            kl_local_no_warmup = kl_divergence_l
+            weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup    
         
         if self.finetune == 1:
             z_expr_dep=inference_outputs['z_expr_dep']       
@@ -1003,7 +1042,8 @@ class HALOMASKVAE_ALN(BaseModuleClass):
             nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64)  + self.beta_3 * a2r_r2a_score_loss + \
             self.beta_2 * a2rscore_coupled_loss + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss \
                 + self.beta1 * r2ascore_decoupled_loss
-            reconst_loss = nod_loss * torch.ones_like(reconst_loss)
+            # reconst_loss = nod_loss * torch.ones_like(reconst_loss)
+            reconst_loss = nod_loss 
             # print("kld_paird loss {}, kld_divergence_acc {}, kld_paired {}"\
             #     .format(kl_divergence_z.shape, kl_divergence_acc.shape, kld_paired.shape))
             kl_local_for_warmup = kl_divergence_z + kl_divergence_acc + kld_paired

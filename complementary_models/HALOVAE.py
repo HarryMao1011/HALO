@@ -158,6 +158,7 @@ class HALOVAE(MULTIVAE):
         self.use_batch_norm_decoder = use_batch_norm in ("decoder", "both")
         self.use_layer_norm_encoder = use_layer_norm in ("encoder", "both")
         self.use_layer_norm_decoder = use_layer_norm in ("decoder", "both")
+        
         self.encode_covariates = encode_covariates
         self.deeply_inject_covariates = deeply_inject_covariates
         self.use_size_factor_key = use_size_factor_key

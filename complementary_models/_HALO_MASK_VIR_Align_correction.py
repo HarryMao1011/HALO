@@ -505,8 +505,8 @@ class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMi
 
         assert(isinstance(top_quantile, float) and top_quantile > 0 and top_quantile < 1)
         hits_matrix = self._validate_hits_matrix(hits_matrix)
-        print(hits_matrix.shape)
-        print(metadata)
+        # print(hits_matrix.shape)
+        # print(metadata)
         num_peaks = loadings.shape[1]
         if num_exo_features == None:
             num_exo_features = num_peaks
@@ -536,9 +536,6 @@ class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMi
             neither = num_exo_features - (overlap + module_only + tf_only)
             if neither < 0:
                 neither = 0
-            # print("tf_only {}, module_only {}, overlap {}, tf_hits {}".format(tf_only, module_only, overlap, tf_hits))
-            # print("neither: {}".format(neither))
-
 
             contingency_matrix = np.array([[overlap, module_only], [tf_only, neither]])
             # print("contigency_matrix {}".format(contingency_matrix))

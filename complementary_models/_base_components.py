@@ -527,19 +527,15 @@ class NeuralDecoderRNA(nn.Module):
             dropout_rate=0,
         )
 
-        # self.px_r_decoder = FCLayers(
-        #     n_in=n_input,
-        #     n_out=n_output,
-        #     n_cat_list=n_cat_list,
-        #     n_layers=1,
-        #     use_activation=False,
-        #     use_batch_norm=use_batch_norm,
-        #     use_layer_norm=use_layer_norm,
-        #     bias=bias,
-        #     dropout_rate=0,
-        # )
     
         # dropout
+        # self.px_dropout_decoder = FCLayers(
+        #     n_in=n_input,
+        #     n_out=n_output,
+        #     n_layers=1,
+        # )
+
+
         self.px_dropout_decoder = FCLayers(
             n_in=n_input,
             n_out=n_output,
@@ -551,6 +547,12 @@ class NeuralDecoderRNA(nn.Module):
             bias=bias,
             dropout_rate=0,
         )
+
+        # self.px_scale_decoder = nn.Sequential(
+        #     nn.Linear(n_input, n_output),
+        #     nn.Softmax(dim=-1)
+        # )
+
 
     def calc_feature_outputs(self, inputs, *cat_list: int):
         """Returns the output computed by each feature net."""
@@ -577,11 +579,13 @@ class NeuralDecoderRNA(nn.Module):
         self, dispersion: str, z: torch.Tensor, library: torch.Tensor, *cat_list: int
     ):
         # The decoder returns values for the parameters of the ZINB distribution
-        individual_outputs = self.calc_feature_outputs(z, self.n_cat_list)
+        individual_outputs = self.calc_feature_outputs(z, *cat_list)
         z_feat = torch.cat(individual_outputs, dim=-1)
         raw_px_scale = self.factor_regressor(z_feat, *cat_list)
+        # px_scale = self.px_scale_decoder(z_feat, *cat_list)
         px_scale = torch.softmax(raw_px_scale, dim=-1)
         px_dropout = self.px_dropout_decoder(z, *cat_list)
+        # px_dropout = self.px_dropout_decoder(z_feat, *cat_list)
         px_rate = torch.exp(library) * px_scale
         # px_r = self.px_r_decoder(z_feat, *cat_list)
         px_r = None

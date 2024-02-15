@@ -388,32 +388,6 @@ class GateDecoder(torch.nn.Module):
         self.n_hidden_global = n_hidden_global
         self.n_cat_list = n_cat_list
         self.fine_tune = fine_tune
-        # self.gate_layer = FCLayers(
-        #     n_in=n_input,
-        #     n_out=n_input,
-        #     # n_out = n_input*n_hidden_local,
-        #     n_cat_list=n_cat_list,
-        #     n_layers=n_layers,
-        #     n_hidden=n_hidden_global,
-        #     dropout_rate=0,
-        #     activation_fn=torch.nn.LeakyReLU,
-        #     use_batch_norm=use_batch_norm,
-        #     use_layer_norm=use_layer_norm,
-        # )
-
-        # self.gate_layer = FCLayers(
-        #     n_in=n_input,
-        #     n_out=n_input*n_output,
-        #     # n_out = n_input*n_hidden_local,
-        #     n_cat_list=n_cat_list,
-        #     n_layers=1,
-        #     n_hidden=n_hidden_global,
-        #     dropout_rate=0,
-        #     activation_fn=torch.nn.LeakyReLU,
-        #     use_batch_norm=use_batch_norm,
-        #     use_layer_norm=use_layer_norm,
-        # )
-
         self.gate_layer = GateLayer(
             n_input=n_input,
             n_output=n_input*n_output,
@@ -422,8 +396,6 @@ class GateDecoder(torch.nn.Module):
             sigma= 0.1,
             finetune=False
         )
-
-
         feature_list = []
         for i in range(self.n_input):
 
@@ -442,100 +414,17 @@ class GateDecoder(torch.nn.Module):
         self.feature_nns = nn.ModuleList(feature_list)
 
 
-
-        # output_list = []
-        # for i in range(self.n_output):
-
-        #     output_list.append( 
-        #     torch.nn.Sequential(
-        #     torch.nn.Linear(n_hidden_local*n_input, 1),
-        #     torch.nn.Sigmoid()))
-
-        # self.output_networks = nn.ModuleList(output_list)
-
-        # self.feature_nns = nn.ModuleList([FCLayers(
-        #     n_in=1,
-        #     # name= f"FeatureNN_{i}",
-        #     n_out=n_hidden_local,
-        #     n_cat_list=n_cat_list,
-        #     n_layers=n_layers,
-        #     n_hidden=n_hidden_local,
-        #     dropout_rate=0,
-        #     activation_fn=torch.nn.LeakyReLU,
-        #     use_batch_norm=use_batch_norm,
-        #     use_layer_norm=use_layer_norm,
-        #     inject_covariates=deep_inject_covariates,
-        # ) for i in range(self.n_input)])
-        # # print("feature_nns length is {}".format(len(self.feature_nns)))
-        # print("feature_nns[1] is {}".format(self.feature_nns[0]))
-
-
-        # self.feature_nns = FCLayers(
-        #     n_in=n_input,
-        #     # name= f"FeatureNN_{i}",
-        #     n_out=n_input * n_hidden_local,
-        #     n_cat_list=n_cat_list,
-        #     n_layers=n_layers,
-        #     n_hidden=n_hidden_local,
-        #     dropout_rate=0,
-        #     activation_fn=torch.nn.LeakyReLU,
-        #     use_batch_norm=use_batch_norm,
-        #     use_layer_norm=use_layer_norm,
-        #     inject_covariates=deep_inject_covariates,
-        # ) 
-        # print("feature_nns length is {}".format(len(self.feature_nns)))
-        # print("feature_nns[1] is {}".format(self.feature_nns[0]))
-
-
-
-        # self.output = FCLayers(
-        #     n_in=n_input * n_hidden_local,
-        #     n_out=n_output,
-        #     n_cat_list=n_cat_list,
-        #     n_layers=1,
-        #     n_hidden=n_hidden_local,
-        #     dropout_rate=0,
-        #     activation_fn=torch.nn.LeakyReLU,
-        #     use_batch_norm=use_batch_norm,
-        #     use_layer_norm=use_layer_norm,
-        #     inject_covariates=deep_inject_covariates,
-        # )
-
-        # self.output = torch.nn.Sequential(
-        #     torch.nn.Linear(n_hidden_local*n_input, n_output),
-        #     torch.nn.Sigmoid()
-        # )
-
         self.output = torch.nn.Sequential(
             parallel_linear_layer(n_hidden_local*n_input, n_output),
             torch.nn.Sigmoid()
         )
 
-        # self.output = torch.nn.Sequential(
-        #     torch.nn.Linear(, n_output),
-        #     torch.nn.Sigmoid()
-        # )
 
-        # self.gumble = gumbel_softmax(logits=self.n_input)
         print("gate decoder initialization n_input {}, n_output {}, \
         n_hidden_local {}, n_hidden_global {}, n_cat_list {}, *cat_list {}".format(self.n_input, self.n_output, \
             self.n_hidden_local, self.n_hidden_global, n_cat_list, *n_cat_list))
 
-        # self.px_decoder = FCLayers(
-        #     n_in=1,
-        #     n_out=n_hidden,
-        #     n_cat_list=n_cat_list,
-        #     n_layers=n_layers,
-        #     n_hidden=n_hidden,
-        #     dropout_rate=0,
-        #     activation_fn=torch.nn.LeakyReLU,
-        #     use_batch_norm=use_batch_norm,
-        #     use_layer_norm=use_layer_norm,
-        #     inject_covariates=deep_inject_covariates,
-        # )
-        # self.output = torch.nn.Sequential(
-        #     torch.nn.Linear(n_hidden, n_output), torch.nn.Sigmoid()
-        # )
+
     def calc_feature_outputs(self, inputs, *cat_list: int):
         """Returns the output computed by each feature net."""
         # print("inputs shape of feature_nn is {}".format(inputs.shape))
@@ -547,10 +436,7 @@ class GateDecoder(torch.nn.Module):
             # print("single result shape {}".format(result.shape))
             results.append(result)
 
-        # results = self.feature_nns(inputs, *cat_list)    
 
-
-        # return [self.feature_nns[i](inputs[:, i]) for i in range(self.n_input)]
         return results
 
     def calc_gates(self, inputs, *cat_list: int):
@@ -559,50 +445,6 @@ class GateDecoder(torch.nn.Module):
         # return gumbel_softmax(self.gate_layer(inputs, *cat_list))
         return self.gate_layer(inputs, *cat_list)
 
-
-    # def calc_gates_feature(self, inputs:torch.Tensor,  *cat_list: int):
-    #     features = self.calc_feature_outputs(inputs, *cat_list)
-    #     gates = self.calc_gates(inputs, *cat_list)
-    #     # return torch.mul(gates, features)
-    #     g_rows = gates.shape[0] 
-    #     # print("g_rows {}".format(g_rows))
-    #     # print("gates shape: {}".format(gates.shape))
-    #     # print("gates output {}".format(gates))
-
-    #     for i in range(self.n_input):
-    #         temp = gates[:, i].unsqueeze(1)
-    #         # print("unsqueezed shape {}".format(temp.shape))
-    #         temp = temp.repeat(1, self.n_hidden_local)
-    #         # print("temp shape {}, hidden_local {}".format(temp.shape, self.n_hidden_local))
-    #         # print("feature[i] shape is {}".format(features[i].shape))
-    #         features[i] = torch.mul(temp, features[i])
-    #     return features
-
-    # def calc_gates_feature(self, inputs:torch.Tensor,  *cat_list: int):
-    #     features = self.calc_feature_outputs(inputs, *cat_list)
-    #     gates = self.calc_gates(inputs, *cat_list)
-    #     # print("linear layer shape {}".format(self.output[0].weight.shape))
-
-    #     # print("gates.shape {}".format(gates.shape))
-    #     gates = torch.mean(gates, 0)
-    #     gates = torch.reshape(gates, (self.n_input, self.n_output))
-    #     # gates_param = torch.autograd.Variable(gates.clone(), requires_grad=True)
-    #     # print("gates_param is leaf: {}".format(gates_param.is_leaf))
-    #     # with torch.no_grad():
-    #     Y = torch.empty([self.n_input*self.n_hidden_local, self.n_output], device='cuda')
-    #     for i in range(self.n_input):
-    #         single_gate = gates[i, :]
-    #         single_gate = single_gate.repeat(self.n_hidden_local, 1)
-    #         # single_gate = torch.autograd.Variable(single_gate.clone(), requires_grad=True)
-    #         # print("single_gate is leaf: {}".format(single_gate.is_leaf))
-    #         # print("Y is leaf: {}".format(Y.is_leaf))
-    #         Y[i*self.n_hidden_local : (i+1)*self.n_hidden_local, :] = single_gate
-        
-    #     with torch.no_grad():
-    
-    #         self.output[0].weight = torch.nn.parameter.Parameter(torch.mul(self.output[0].weight, Y.t()))
-        
-    #     return features, gates
 
     def calc_gates_repeat(self, inputs:torch.Tensor,  *cat_list: int):
         gates = self.calc_gates(inputs, *cat_list)
