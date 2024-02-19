@@ -1,6 +1,6 @@
 import logging
 from typing import List, Optional
-
+import warnings
 from anndata import AnnData
 from scipy.sparse import csr_matrix
 import scvi
@@ -826,6 +826,8 @@ class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMi
         batch_size: Optional[int] = None,
         return_mean: bool = True,
         return_numpy: bool = False,
+        library_size: Union[float, Literal["latent"]] = 1,
+
     ) -> Union[np.ndarray, pd.DataFrame]:
         r"""
         Returns the normalized (decoded) gene expression.
@@ -881,6 +883,20 @@ class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMi
             all_genes = adata.var_names[: self.n_genes]
             gene_mask = [gene in gene_list for gene in all_genes]
 
+        if n_samples > 1 and return_mean is False:
+            if return_numpy is False:
+                warnings.warn(
+                    "return_numpy must be True if n_samples > 1 and return_mean is False, returning np.ndarray"
+                )
+            return_numpy = True
+        if library_size == "latent":
+            generative_output_key = "mu"
+            scaling = 1
+        else:
+            generative_output_key = "scale"
+            scaling = library_size
+
+
         exprs = []
         for tensors in scdl:
             per_batch_exprs = []
@@ -896,8 +912,9 @@ class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMi
                     # generative_kwargs=dict(use_z_mean=use_z_mean),
                     compute_loss=False,
                 )
-                output = generative_outputs["px_scale"]
+                output = getattr(generative_outputs["px"], generative_output_key)
                 output = output[..., gene_mask]
+                output *= scaling
                 output = output.cpu().numpy()
                 per_batch_exprs.append(output)
             per_batch_exprs = np.stack(
