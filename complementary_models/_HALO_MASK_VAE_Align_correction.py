@@ -477,7 +477,7 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         )
         return input_dict
 
-    def _get_generative_input(self, tensors, inference_outputs):
+    def _get_generative_input(self, tensors, inference_outputs, transform_batch=None):
         """
         RNA generative input
         
@@ -494,7 +494,8 @@ class HALOMASKVAE_ALN(BaseModuleClass):
 
         cat_key = REGISTRY_KEYS.CAT_COVS_KEY
         cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
-
+        if transform_batch is not None:
+            batch_index = torch.ones_like(batch_index) * transform_batch
 
         size_factor_key = REGISTRY_KEYS.SIZE_FACTOR_KEY
         size_factor = (
@@ -511,10 +512,14 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         
         """
         z_acc = inference_outputs["z_acc"]
-
+        # print("starting getting qz_acc")
         qz_acc = inference_outputs["qz_acc"]
-
+        # print("finished getting qz_acc")    
         libsize_acc = inference_outputs["libsize_acc"]
+
+        # qzm_expr = inference_outputs["qzm_expr"]
+
+        # qzm_acc = inference_outputs["qzm_acc"]
 
         input_dict = dict(
             z=z,
@@ -526,6 +531,8 @@ class HALOMASKVAE_ALN(BaseModuleClass):
             size_factor=size_factor,
             z_acc =z_acc, 
             qz_acc = qz_acc,
+            # qzm_expr = qzm_expr,
+            # qzm_acc= qzm_acc,
             libsize_acc = libsize_acc
         )
         return input_dict
@@ -676,6 +683,8 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         qz_acc = qz_acc,
         z_acc = z_acc,
         libsize_acc=libsize_acc,
+        qzm_acc = qzm_acc,
+        qzm_expr = qzm_expr,
 
         ### add coupled and decoupled components
 
@@ -722,10 +731,18 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         size_factor=None,
         y=None,
         transform_batch=None,
+        use_z_mean=False
     ):
         """Runs the generative model."""
         # TODO: refactor forward function to not rely on y
         # Likelihood distribution
+        if cat_covs is not None:
+            categorical_input = torch.split(cat_covs, 1, dim=1)
+        else:
+            categorical_input = tuple()
+        
+        # z = z if not use_z_mean else qzm_expr
+
         if cont_covs is None:
             decoder_input = z
         elif z.dim() != cont_covs.dim():
@@ -735,11 +752,7 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         else:
             decoder_input = torch.cat([z, cont_covs], dim=-1)
 
-        if cat_covs is not None:
-            categorical_input = torch.split(cat_covs, 1, dim=1)
-        else:
-            categorical_input = tuple()
-
+        
         if transform_batch is not None:
             batch_index = torch.ones_like(batch_index) * transform_batch
 
@@ -756,7 +769,6 @@ class HALOMASKVAE_ALN(BaseModuleClass):
             y,
         )
         # print("finished RNA decoder")
-
 
         if self.dispersion == "gene-label":
             px_r = F.linear(
@@ -802,8 +814,9 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         else:
             categorical_input = tuple()
 
-        latent_acc = z_acc 
-        
+        latent_acc = z_acc if not use_z_mean else qz_acc.loc
+
+        # print("finished getting qzm_acc")
         if cont_covs is None:
             decoder_input_acc = latent_acc
 

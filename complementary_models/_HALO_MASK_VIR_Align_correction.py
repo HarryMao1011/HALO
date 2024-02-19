@@ -432,8 +432,7 @@ class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMi
             loading = np.expand_dims(loading, axis=0)
             loadings.append(loading)
         
-        # nploadings =  np.array(loadings)
-        # nploadings = nploadings.mean()
+
         loadings = np.concatenate(loadings, axis=0)
         loadings = np.mean(loadings, axis=0)
 
@@ -712,6 +711,7 @@ class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMi
         normalize_regions: bool = False,
         batch_size: int = 32,
         return_numpy: bool = False,
+        library_size = None
     ) -> Union[np.ndarray, csr_matrix, pd.DataFrame]:
         """
         Impute the full accessibility matrix.
@@ -772,15 +772,18 @@ class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMi
 
         imputed = []
         for tensors in post:
-            # get_generative_input_kwargs = dict(transform_batch=transform_batch[0])
-            # generative_kwargs = dict(use_z_mean=use_z_mean)
+            get_generative_input_kwargs = dict(transform_batch=transform_batch[0])
+            generative_kwargs = dict(use_z_mean=use_z_mean)
             inference_outputs, generative_outputs = self.module.forward(
                 tensors=tensors,
-                # get_generative_input_kwargs=get_generative_input_kwargs,
-                # generative_kwargs=generative_kwargs,
+                get_generative_input_kwargs=get_generative_input_kwargs,
+                generative_kwargs=generative_kwargs,
                 compute_loss=False,
             )
             p = generative_outputs["pa"].cpu()
+
+            if library_size:
+                 p *= library_size
 
             if normalize_cells:
                 p *= inference_outputs["libsize_acc"].cpu()
