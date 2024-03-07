@@ -123,14 +123,14 @@ def torch_infer_nonsta_dir(X, Y, c_indx, width=0.1, IF_GP=False, device='cuda'):
 
 
 
-def split_rna(adata_mvi, modality="modality"):
-    rna_index = adata_mvi.var[modality] =="Gene Expression"
+def split_rna(adata_mvi, modality="modality", name="Gene Expression"):
+    rna_index = adata_mvi.var[modality] == name
     rna_data = anndata.AnnData(X=adata_mvi.X[:, rna_index],
     obs=adata_mvi.obs, 
     var=adata_mvi.var[rna_index])
     return rna_data
 
-def split_atac(adata_mvi,  modality="modality"):
+def split_atac(adata_mvi,  modality="modality", name="Peaks"):
     atac_index = adata_mvi.var[modality] =="Peaks"
     atac_data = anndata.AnnData(X=adata_mvi.X[:, atac_index],
                             obs=adata_mvi.obs, 

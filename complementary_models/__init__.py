@@ -1,4 +1,5 @@
 # from . import parallel_model
+from .HSIC import dHSIC
 from .parallel_model import MULTIVAE_Parallel
 from .parallel_model import MultiVI_Parallel
 from .REGISTRY_KEYS import REGISTRY_KEYS
@@ -23,3 +24,4 @@ from ._HALO_MASK_VIR_Align import HALOMASKVIR_ALN as HALOMASKVIR_ALN0
 
 from ._HALO_MASK_VAE_Align_correction import HALOMASKVAE_ALN
 from ._HALO_MASK_VIR_Align_correction import HALOMASKVIR_ALN
+
