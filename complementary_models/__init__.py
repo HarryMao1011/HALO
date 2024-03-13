@@ -15,13 +15,12 @@ from ._HALO_VIR import HALOVIR
 from .data_utils import _get_latent_adata_type
 from ._HALO_LDVAER import HALOLDVAER
 from ._HALO_LDVIR import HALOLDVIR
-from ._HALO_MASK_VAE import HALOMASKVAE
-from ._HALO_MASK_VIR import HALOMASKVIR
+## old model
+# from ._HALO_MASK_VAE import HALOMASKVAE
+# from ._HALO_MASK_VIR import HALOMASKVIR
 from ._base_components import NeuralDecoderRNA
 from .__peak_vae import NeuralGateDecoder
-from ._HALO_MASK_VAE_Align import HALOMASKVAE_ALN as HALOMASKVAE_ALN0
-from ._HALO_MASK_VIR_Align import HALOMASKVIR_ALN as HALOMASKVIR_ALN0
 
-from ._HALO_MASK_VAE_Align_correction import HALOMASKVAE_ALN
-from ._HALO_MASK_VIR_Align_correction import HALOMASKVIR_ALN
+from ._HALO_MASK_VAE_Align_correction import HALOMASKVAE
+from ._HALO_MASK_VIR_Align_correction import HALOMASKVIR
 

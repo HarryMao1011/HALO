@@ -26,7 +26,7 @@ from scvi.model.base import ArchesMixin, RNASeqMixin, VAEMixin, BaseModelClass
 import torch
 logger = logging.getLogger(__name__)
 import numpy as np
-from ._HALO_MASK_VAE_Align_correction import HALOMASKVAE_ALN as HALOMASKVAE
+from ._HALO_MASK_VAE_Align_correction import  HALOMASKVAE
 from typing import Dict, Iterable, List, Optional, Sequence, Union
 import pandas as pd
 from scvi._types import Number
@@ -51,12 +51,13 @@ from  tools.plots.factor_influence_plot import plot_factor_influence
 logger = logging.getLogger(__name__)
 import scanpy as sc
 
-class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin, BaseModelClass):
+class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin, BaseModelClass):
     def __init__(
         self,
         adata: AnnData,
         n_genes :int,
         n_regions: int,
+        w_a:float=1,
         n_hidden: int = 128,
         n_latent: int = 10,
         n_dependent: int = 5,
@@ -71,7 +72,7 @@ class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMi
         # super(HALOMASKVIR_ALN, self).__init__(adata)
 
         super().__init__(adata)
-
+        self.w_a = w_a
         n_cats_per_cov = (
             self.adata_manager.get_state_registry(
                 REGISTRY_KEYS.CAT_COVS_KEY
@@ -94,7 +95,6 @@ class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMi
         self.n_latent = n_latent
         self.n_genes = n_genes
 
-        print("n_cats_per_cov {}".format(n_cats_per_cov))
         self.module = HALOMASKVAE(
             n_input_genes=n_genes,
             n_input_regions = n_regions,
@@ -114,6 +114,7 @@ class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMi
             library_log_means=library_log_means,
             library_log_vars=library_log_vars,
             gates_finetune=self.fine_tune,
+            w_a=self.w_a,
             **model_kwargs,
         )
         self._model_summary_string = (

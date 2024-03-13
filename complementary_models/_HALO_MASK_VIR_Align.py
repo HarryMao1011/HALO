@@ -26,7 +26,7 @@ from scvi.model.base import ArchesMixin, RNASeqMixin, VAEMixin, BaseModelClass
 import torch
 logger = logging.getLogger(__name__)
 import numpy as np
-from ._HALO_MASK_VAE_Align import HALOMASKVAE_ALN as HALOMASKVAE
+from ._HALO_MASK_VAE_Align import HALOMASKVAE 
 from typing import Dict, Iterable, List, Optional, Sequence, Union
 import pandas as pd
 from scvi._types import Number
@@ -51,7 +51,7 @@ from  tools.plots.factor_influence_plot import plot_factor_influence
 logger = logging.getLogger(__name__)
 import scanpy as sc
 
-class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin, BaseModelClass):
+class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin, BaseModelClass):
     def __init__(
         self,
         adata: AnnData,
@@ -66,9 +66,10 @@ class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMi
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
         latent_distribution: Literal["normal", "ln"] = "normal",
         fine_tune = False,
+        w_a = 1,
         **model_kwargs,
     ):
-        super(HALOMASKVIR_ALN, self).__init__(adata)
+        super(HALOMASKVIR, self).__init__(adata)
         n_cats_per_cov = (
             self.adata_manager.get_state_registry(
                 REGISTRY_KEYS.CAT_COVS_KEY
@@ -76,6 +77,7 @@ class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMi
             if REGISTRY_KEYS.CAT_COVS_KEY in self.adata_manager.data_registry
             else None
         )
+        self.w_a = 1
         n_batch = self.summary_stats.n_batch
         use_size_factor_key = (
             REGISTRY_KEYS.SIZE_FACTOR_KEY in self.adata_manager.data_registry
@@ -113,6 +115,7 @@ class HALOMASKVIR_ALN(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMi
             library_log_means=library_log_means,
             library_log_vars=library_log_vars,
             gates_finetune=self.fine_tune,
+            w_a = self.w_a,
             **model_kwargs,
         )
         self._model_summary_string = (

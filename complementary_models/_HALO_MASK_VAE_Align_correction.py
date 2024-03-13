@@ -84,7 +84,7 @@ class MLP(nn.Module):
 
 
 # HALOVAER model
-class HALOMASKVAE_ALN(BaseModuleClass):
+class HALOMASKVAE(BaseModuleClass):
     """
     Variational auto-encoder model.
 
@@ -157,6 +157,7 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         self,
         n_input_genes: int,
         n_input_regions:int,
+        w_a: float,
         n_batch: int = None,
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
         n_labels: int = 0,
@@ -194,7 +195,7 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         beta1: Optional[float] = 1e6,
         beta2: Optional[float] = 5e5,
         beta3: Optional[float] = 1e8,
-        gates_finetune:Optional[bool] = False
+        gates_finetune:Optional[bool] = False,
 
 
     ):
@@ -253,6 +254,7 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         self.beta1 = beta1
         self.beta2 = beta2
         self.beta3 = beta3
+        self.w_a = w_a
 
         if not self.use_observed_lib_size:
             if library_log_means is None or library_log_means is None:
@@ -301,9 +303,7 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         cat_list = [n_batch] + list([] if n_cats_per_cov is None else torch.tensor(n_cats_per_cov))
 
         encoder_cat_list = cat_list if encode_covariates else None
-        # print("n_batch {}".format(n_batch))
-        # print("encoder_cat_list: {}".format(encoder_cat_list))
-        # print("cat_list ", cat_list)
+
         self.z_encoder = Encoder(
             n_input_encoder,
             n_latent,
@@ -380,15 +380,6 @@ class HALOMASKVAE_ALN(BaseModuleClass):
 
         # decoder goes from n_latent-dimensional space to n_input-d data
         n_input_decoder = n_latent + n_continuous_cov
-        # self.decoder = LinearDecoderSCVI(
-        #     n_input_decoder,
-        #     n_input_genes,
-        #     n_cat_list=cat_list,
-        #     n_layers=1,
-        #     n_hidden_local=68,
-        #     bias=True
-
-        # )
         if n_batch==1:
             self.decoder = LinearDecoderSCVI(
             n_input_decoder,
@@ -429,9 +420,13 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         #     use_layer_norm=use_layer_norm_decoder,
         #     scale_activation="softplus" if use_size_factor_key else "softmax",
         # )
-        
-        self.decouple_aligner = MLP([self.n_latent_indep, 50, 100, 100, self.n_latent_indep],final_act="sigmoid")
-        self.couple_aligner = MLP([self.n_latent_dep, 50, 100, 100, self.n_latent_dep], final_act="sigmoid")
+        print("self.w_a :{}".format(self.w_a))
+        if self.w_a != 0:
+            print("yes there is aligner")
+            self.decouple_aligner = MLP([self.n_latent_indep, 50, 100, 100, self.n_latent_indep],final_act="sigmoid")
+            self.couple_aligner = MLP([self.n_latent_dep, 50, 100, 100, self.n_latent_dep], final_act="sigmoid")
+        else:
+            print("no there is no aligners")    
         
 
     @torch.no_grad()
@@ -663,9 +658,12 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         qzv_expr_indep = qzv_expr[:, self.n_latent_dep:]
         
         ## build the alignment and predicting from latent atac to latent gene
-        
-        pred_expr_dep_m =  self.couple_aligner(qzm_acc_dep)
-        pred_expr_indep_m =  self.decouple_aligner(qzm_acc_indep)
+        if self.w_a != 0:
+            pred_expr_dep_m =  self.couple_aligner(qzm_acc_dep)
+            pred_expr_indep_m =  self.decouple_aligner(qzm_acc_indep)
+        elif self.w_a == 0:
+            pred_expr_dep_m =   qzm_expr_dep 
+            pred_expr_indep_m = qzm_expr_indep
         
         z_expr_dep = z[:, :self.n_latent_dep]
         z_expr_indep = z[:, self.n_latent_dep:]
@@ -938,13 +936,12 @@ class HALOMASKVAE_ALN(BaseModuleClass):
         ## get the aligned part
         qzm_expr_dep=inference_outputs['qzm_expr_dep']
         qzm_expr_indep=inference_outputs['qzm_expr_indep']
-        pred_expr_dep_m =  inference_outputs['pred_expr_dep_m']
-        pred_expr_indep_m =  inference_outputs['pred_expr_indep_m']
         mse_loss = nn.MSELoss()
-        aligned_loss_dep = mse_loss(pred_expr_dep_m, qzm_expr_dep)
-        aligned_loss_indep = mse_loss(pred_expr_indep_m, qzm_expr_indep)
-
-
+        if self.w_a != 0:
+            pred_expr_dep_m =  inference_outputs['pred_expr_dep_m']
+            pred_expr_indep_m =  inference_outputs['pred_expr_indep_m']
+            aligned_loss_dep = self.w_a * mse_loss(pred_expr_dep_m, qzm_expr_dep)
+            aligned_loss_indep =  self.w_a  * mse_loss(pred_expr_indep_m, qzm_expr_indep)
 
         if self.expr_train and not self.acc_train:
         ### RNA only
@@ -1135,7 +1132,11 @@ class HALOMASKVAE_ALN(BaseModuleClass):
             kl_local_no_warmup = kl_divergence_l
             weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
         
-        loss = torch.mean(reconst_loss + weighted_kl_local + aligned_loss_dep + aligned_loss_indep)
+        if self.w_a != 0 :
+
+            loss = torch.mean(reconst_loss + weighted_kl_local + aligned_loss_dep + aligned_loss_indep)
+        else:
+             loss = torch.mean(reconst_loss + weighted_kl_local)    
 
         kl_local = dict(
             kl_divergence_l=kl_divergence_l, kl_divergence_z=kl_divergence_z
