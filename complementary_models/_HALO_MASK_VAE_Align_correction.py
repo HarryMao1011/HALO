@@ -195,12 +195,15 @@ class HALOMASKVAE(BaseModuleClass):
         beta1: Optional[float] = 1e6,
         beta2: Optional[float] = 5e5,
         beta3: Optional[float] = 1e8,
+        omega1: Optional[float] = 10,
+        omega2: Optional[float] = 1,
         gates_finetune:Optional[bool] = False,
 
 
     ):
         super().__init__()
-    
+        self.omega1 = omega1
+        self.omega2 = omega2
         self.n_input_regions = n_input_regions
         self.n_input_genes = n_input_genes
 
@@ -447,7 +450,17 @@ class HALOMASKVAE(BaseModuleClass):
         if self.n_batch > 1:
             loadings = loadings[:, : -self.n_batch]
 
-        return loadings    
+        return loadings 
+
+    def compute_constraint_loss(self, constraints, omega_1):
+        num_gene = self.n_input_genes
+        num_region = self.n_input_regions
+        num_batch = self.n_batch
+        num = (num_gene + num_region) / 2
+        # print("cd-nod loss {}",constraints)
+
+        return constraints * num_batch * omega_1 *num 
+
 
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
@@ -1041,7 +1054,7 @@ class HALOMASKVAE(BaseModuleClass):
             a2r_r2a_score_loss =  torch.maximum(a2rscore_lagging-r2ascore_lagging, torch.tensor(0))
             a2rscore_lagging = torch.maximum(-self.alpha + a2rscore_lagging, torch.tensor(0))
             r2ascore_decoupled_loss = torch.maximum(self.alpha - r2ascore_lagging, torch.tensor(0))
-
+            
 
             # print(a2rscore_coupled, r2ascore_coupled, a2rscore_lagging, r2ascore_lagging)
 
@@ -1049,9 +1062,17 @@ class HALOMASKVAE(BaseModuleClass):
             # self.beta_3 = 1e8
             # self.beta_1 = 1e6
 
-            nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64)  + self.beta_3 * a2r_r2a_score_loss + \
-            self.beta_2 * a2rscore_coupled_loss + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss \
-                + self.beta1 * r2ascore_decoupled_loss
+            # nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64)  + self.beta_3 * a2r_r2a_score_loss + \
+            # self.beta_2 * a2rscore_coupled_loss + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss \
+            #     + self.beta1 * r2ascore_decoupled_loss
+
+
+
+            nod_loss   =    a2rscore_lagging.to(torch.float64)  +  a2r_r2a_score_loss + \
+            a2rscore_coupled_loss + a2rscore_coupled_loss + r2ascore_coupled_loss +  r2ascore_decoupled_loss
+
+            nod_loss = self.compute_constraint_loss(nod_loss, omega_1=self.omega1)
+
             # reconst_loss = nod_loss * torch.ones_like(reconst_loss)
             reconst_loss = nod_loss 
             # print("kld_paird loss {}, kld_divergence_acc {}, kld_paired {}"\
@@ -1061,7 +1082,7 @@ class HALOMASKVAE(BaseModuleClass):
             # print("nod_loss {}".format(nod_loss))
 
         
-        elif   self.finetune == 2:  
+        elif  self.finetune == 2:  
 
             z_expr_dep=inference_outputs['z_expr_dep']       
             z_acc_dep=inference_outputs['z_acc_dep']
@@ -1091,13 +1112,15 @@ class HALOMASKVAE(BaseModuleClass):
             r2ascore_coupled, _, _ = torch_infer_nonsta_dir(z_expr_dep, z_acc_dep, time)
             # self.alpha=0.02
 
-            a2rscore_coupled_loss = torch.maximum(self.alpha - a2rscore_coupled, torch.tensor(0))
-            r2ascore_coupled_loss = torch.maximum(self.alpha - r2ascore_coupled, torch.tensor(0))
+            a2rscore_coupled_loss = torch.maximum(self.alpha - a2rscore_coupled+1e-4, torch.tensor(0))
+            r2ascore_coupled_loss = torch.maximum(self.alpha - r2ascore_coupled+1e-4, torch.tensor(0))
             a2rscore_lagging, _, _ = torch_infer_nonsta_dir(z_acc_indep, z_expr_indep, time)
             r2ascore_lagging, _, _ = torch_infer_nonsta_dir(z_expr_indep, z_acc_indep, time)
             a2r_r2a_score_loss =  torch.maximum(a2rscore_lagging-r2ascore_lagging+1e-4, torch.tensor(0)) 
             a2rscore_lagging = torch.maximum(-self.alpha + a2rscore_lagging, torch.tensor(0))
             r2ascore_lagging = torch.maximum(-self.alpha + r2ascore_lagging, torch.tensor(0))
+            # r2ascore_decoupled_loss = torch.maximum(self.alpha - r2ascore_lagging, torch.tensor(0))
+
 
 
 
@@ -1115,14 +1138,15 @@ class HALOMASKVAE(BaseModuleClass):
             # self.beta_1 = 1e6
 
 
-            nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64) + self.beta_1 * r2ascore_lagging.to(torch.float64)\
-                  + self.beta_3 * a2r_r2a_score_loss + self.beta_2 * a2rscore_coupled_loss \
-                     + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss
-            # nod_loss_copy = nod_loss.copy()
-            # nod_loss_copy  = nod_loss_copy.cpu()
-            # reconst_loss_copy = reconst_loss.copy()
+            # nod_loss =   self.beta_1 *  a2rscore_lagging.to(torch.float64) + self.beta_1 * r2ascore_lagging.to(torch.float64)\
+            #       + self.beta_3 * a2r_r2a_score_loss + self.beta_2 * a2rscore_coupled_loss \
+            #          + self.beta_2 * a2rscore_coupled_loss + self.beta_2*r2ascore_coupled_loss
 
-            # print("reconst_loss {}, nod_loss {}".format(reconst_loss, nod_loss))
+            nod_loss   =   a2rscore_lagging.to(torch.float64) + r2ascore_lagging.to(torch.float64)\
+                  +  a2r_r2a_score_loss + a2rscore_coupled_loss + r2ascore_coupled_loss
+
+            nod_loss = self.compute_constraint_loss(nod_loss, omega_1=self.omega1)
+
             reconst_loss = reconst_loss + nod_loss * torch.ones_like(reconst_loss)
             if self.gates_finetune == True:
                 sparsity_regu = 0.01 * self.z_decoder_accessibility.get_gate_regu(z_acc)

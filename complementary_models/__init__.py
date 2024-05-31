@@ -24,3 +24,5 @@ from .__peak_vae import NeuralGateDecoder
 from ._HALO_MASK_VAE_Align_correction import HALOMASKVAE
 from ._HALO_MASK_VIR_Align_correction import HALOMASKVIR
 
+from ._HALO_MASK_VAE_Align_beta import HALOMASKVAE_beta
+from ._HALO_MASK_VIR_Align_beta import HALOMASKVIR_beta

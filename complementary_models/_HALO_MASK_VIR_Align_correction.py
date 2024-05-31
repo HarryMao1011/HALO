@@ -67,6 +67,8 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
         latent_distribution: Literal["normal", "ln"] = "normal",
         fine_tune = False,
+        omega1 = 10,
+        omega2 = 1,
         **model_kwargs,
     ):
         # super(HALOMASKVIR_ALN, self).__init__(adata)
@@ -115,6 +117,8 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
             library_log_vars=library_log_vars,
             gates_finetune=self.fine_tune,
             w_a=self.w_a,
+            omega1=omega1,
+            omega2=omega2,
             **model_kwargs,
         )
         self._model_summary_string = (
@@ -584,7 +588,7 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         label_factors = None, hue = None, palette = 'coolwarm', hue_order = None, 
         ax = None, figsize = (8,8), legend_label = '', show_legend = True, fontsize = 13, 
         pval_threshold = (1e-50, 1e-50), na_color = 'lightgrey',
-        color = 'grey', label_closeness = 3, max_label_repeats = 3, show_factor_ids = False):
+        color = 'grey', label_closeness = 3, max_label_repeats = 3, show_factor_ids = False, size=20):
         '''
         It is often useful to contrast topic enrichments in order to
         understand which factors' influence is unique to certain
@@ -664,7 +668,7 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
             palette = palette, legend_label = legend_label, show_legend = show_legend, label_closeness = label_closeness, 
             na_color = na_color, max_label_repeats = max_label_repeats, figsize=figsize,
             axlabels = ('Topic {} Enrichments'.format(str(topic_1)),'Todule {} Enrichments'.format(str(topic_2))), 
-            fontsize = fontsize, color = color)    
+            fontsize = fontsize, color = color, size=size)    
 
 
 
@@ -1130,91 +1134,91 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
         return result
 
 
-    def plot_compare_topic_enrichments(self, topic_1, topic_2, factor_type = 'motifs', 
-        label_factors = None, hue = None, palette = 'coolwarm', hue_order = None, 
-        ax = None, figsize = (8,8), legend_label = '', show_legend = True, fontsize = 13, 
-        pval_threshold = (1e-50, 1e-50), na_color = 'lightgrey',
-        color = 'grey', label_closeness = 3, max_label_repeats = 3, show_factor_ids = False):
-        '''
-        It is often useful to contrast topic enrichments in order to
-        understand which factors' influence is unique to certain
-        cell states. Topics may be enriched for constitutively-active
-        transcription factors, so comparing two similar topics to find
-        the factors that are unique to each elucidates the dynamic
-        aspects of regulation between states.
-        This function contrasts the enrichments of two topics.
-        Parameters
-        ----------
-        topic1, topic2 : int
-            Which topics to compare.
-        factor_type : str, 'motifs' or 'chip', default = 'motifs'
-            Which factor type to use for enrichment.
-        label_factors : list[str], np.ndarray[str], None; default=None
-            List of factors to label. If not provided, will label all
-            factors that meet the p-value thresholds.
-        hue : dict[str : {str, float}] or None
-            If provided, colors the factors on the plot. The keys of the dict
-            must be the names of transcription factors, and the values are
-            the associated data to map to colors. The values may be 
-            categorical, e.g. cluster labels, or scalar, e.g. expression
-            values. TFs not provided in the dict are colored as *na_color*.
-        palette : str, list[str], or None; default = None
-            Palette of plot. Default of None will set `palette` to the style-specific default.
-        hue_order : list[str] or None, default = None
-            Order to assign hues to features provided by `data`. Works similarly to
-            hue_order in seaborn. User must provide list of features corresponding to 
-            the order of hue assignment. 
-        ax : matplotlib.pyplot.axes, deafult = None
-            Provide axes object to function to add streamplot to a subplot composition,
-            et cetera. If no axes are provided, they are created internally.
-        figsize : tuple(float, float), default = (8,8)
-            Size of figure
-        legend_label : str, None
-            Label for legend.
-        show_legend : boolean, default=True
-            Show figure legend.
-        fontsize : int>0, default=13
-            Fontsize of TF labels on plot.
-        pval_threshold : tuple[float, float], default=(1e-50, 1e-50)
-            Threshold below with TFs will not be labeled on plot. The first and
-            second positions relate p-value with respect to topic 1 and topic 2.
-        na_color : str, default='lightgrey'
-            Color for TFs with no provided *hue*
-        color : str, default='grey'
-            If *hue* not provided, colors all points on plot this color.
-        label_closeness : int>0, default=3
-            Closeness of TF labels to points on plot. When *label_closeness* is high,
-            labels are forced to be very close to points.
-        max_label_repeats : boolean, default=3
-            Some TFs have multiple ChIP samples or Motif PWMs. For these factors,
-            label the top *max_label_repeats* examples. This prevents clutter when
-            many samples for the same TF are close together. The rank of the sample
-            for each TF is shown in the label as "<TF name> (<rank>)".
-        Returns
-        -------
-        matplotlib.pyplot.axes
-        Examples
-        --------
-        .. code-block :: python
-            >>> label = ['LEF1','HOXC13','MEOX2','DLX3','BACH2','RUNX1', 'SMAD2::SMAD3']
-            >>> atac_model.plot_compare_topic_enrichments(23, 17,
-            ...     label_factors = label, 
-            ...     color = 'lightgrey',
-            ...     fontsize=20, label_closeness=5, 
-            ... )
-        .. image:: /_static/mira.topics.AccessibilityModel.plot_compare_topic_enrichments.svg
-            :width: 300
-        '''
+    # def plot_compare_topic_enrichments(self, topic_1, topic_2, factor_type = 'motifs', 
+    #     label_factors = None, hue = None, palette = 'coolwarm', hue_order = None, 
+    #     ax = None, figsize = (8,8), legend_label = '', show_legend = True, fontsize = 13, 
+    #     pval_threshold = (1e-50, 1e-50), na_color = 'lightgrey',
+    #     color = 'grey', label_closeness = 3, max_label_repeats = 3, show_factor_ids = False):
+    #     '''
+    #     It is often useful to contrast topic enrichments in order to
+    #     understand which factors' influence is unique to certain
+    #     cell states. Topics may be enriched for constitutively-active
+    #     transcription factors, so comparing two similar topics to find
+    #     the factors that are unique to each elucidates the dynamic
+    #     aspects of regulation between states.
+    #     This function contrasts the enrichments of two topics.
+    #     Parameters
+    #     ----------
+    #     topic1, topic2 : int
+    #         Which topics to compare.
+    #     factor_type : str, 'motifs' or 'chip', default = 'motifs'
+    #         Which factor type to use for enrichment.
+    #     label_factors : list[str], np.ndarray[str], None; default=None
+    #         List of factors to label. If not provided, will label all
+    #         factors that meet the p-value thresholds.
+    #     hue : dict[str : {str, float}] or None
+    #         If provided, colors the factors on the plot. The keys of the dict
+    #         must be the names of transcription factors, and the values are
+    #         the associated data to map to colors. The values may be 
+    #         categorical, e.g. cluster labels, or scalar, e.g. expression
+    #         values. TFs not provided in the dict are colored as *na_color*.
+    #     palette : str, list[str], or None; default = None
+    #         Palette of plot. Default of None will set `palette` to the style-specific default.
+    #     hue_order : list[str] or None, default = None
+    #         Order to assign hues to features provided by `data`. Works similarly to
+    #         hue_order in seaborn. User must provide list of features corresponding to 
+    #         the order of hue assignment. 
+    #     ax : matplotlib.pyplot.axes, deafult = None
+    #         Provide axes object to function to add streamplot to a subplot composition,
+    #         et cetera. If no axes are provided, they are created internally.
+    #     figsize : tuple(float, float), default = (8,8)
+    #         Size of figure
+    #     legend_label : str, None
+    #         Label for legend.
+    #     show_legend : boolean, default=True
+    #         Show figure legend.
+    #     fontsize : int>0, default=13
+    #         Fontsize of TF labels on plot.
+    #     pval_threshold : tuple[float, float], default=(1e-50, 1e-50)
+    #         Threshold below with TFs will not be labeled on plot. The first and
+    #         second positions relate p-value with respect to topic 1 and topic 2.
+    #     na_color : str, default='lightgrey'
+    #         Color for TFs with no provided *hue*
+    #     color : str, default='grey'
+    #         If *hue* not provided, colors all points on plot this color.
+    #     label_closeness : int>0, default=3
+    #         Closeness of TF labels to points on plot. When *label_closeness* is high,
+    #         labels are forced to be very close to points.
+    #     max_label_repeats : boolean, default=3
+    #         Some TFs have multiple ChIP samples or Motif PWMs. For these factors,
+    #         label the top *max_label_repeats* examples. This prevents clutter when
+    #         many samples for the same TF are close together. The rank of the sample
+    #         for each TF is shown in the label as "<TF name> (<rank>)".
+    #     Returns
+    #     -------
+    #     matplotlib.pyplot.axes
+    #     Examples
+    #     --------
+    #     .. code-block :: python
+    #         >>> label = ['LEF1','HOXC13','MEOX2','DLX3','BACH2','RUNX1', 'SMAD2::SMAD3']
+    #         >>> atac_model.plot_compare_topic_enrichments(23, 17,
+    #         ...     label_factors = label, 
+    #         ...     color = 'lightgrey',
+    #         ...     fontsize=20, label_closeness=5, 
+    #         ... )
+    #     .. image:: /_static/mira.topics.AccessibilityModel.plot_compare_topic_enrichments.svg
+    #         :width: 300
+    #     '''
 
-        m1 = self.get_enrichments(topic_1, factor_type)
-        m2 = self.get_enrichments(topic_2, factor_type)        
+    #     m1 = self.get_enrichments(topic_1, factor_type)
+    #     m2 = self.get_enrichments(topic_2, factor_type)        
         
-        return plot_factor_influence(m1, m2, ax = ax, label_factors = label_factors,
-            pval_threshold = pval_threshold, hue = hue, hue_order = hue_order, 
-            palette = palette, legend_label = legend_label, show_legend = show_legend, label_closeness = label_closeness, 
-            na_color = na_color, max_label_repeats = max_label_repeats, figsize=figsize,
-            axlabels = ('Topic {} Enrichments'.format(str(topic_1)),'Todule {} Enrichments'.format(str(topic_2))), 
-            fontsize = fontsize, color = color) 
+    #     return plot_factor_influence(m1, m2, ax = ax, label_factors = label_factors,
+    #         pval_threshold = pval_threshold, hue = hue, hue_order = hue_order, 
+    #         palette = palette, legend_label = legend_label, show_legend = show_legend, label_closeness = label_closeness, 
+    #         na_color = na_color, max_label_repeats = max_label_repeats, figsize=figsize,
+    #         axlabels = ('Topic {} Enrichments'.format(str(topic_1)),'Todule {} Enrichments'.format(str(topic_2))), 
+    #         fontsize = fontsize, color = color) 
 
 
     def get_rna_loading(self):
