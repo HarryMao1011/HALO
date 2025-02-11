@@ -1,0 +1,9 @@
+python=3.109
+
+numpy=1.23.5
+pandas=1.4.4
+scanpy=1.10.3
+ipykernel=6.29.2
+matplotlib=3.6.3
+scikit-learn=1.0.2
+scvi = 0.13
