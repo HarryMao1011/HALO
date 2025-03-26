@@ -55,7 +55,7 @@ class HALOConfig:
         progress_bar_style: Literal["rich", "tqdm"] = "tqdm",
         batch_size: int = 128,
         seed: int = 0,
-        logging_dir: str = "./scvi_log/",
+        logging_dir: str = "./halo_log/",
         dl_num_workers: int = 0,
         dl_pin_memory_gpu_training: bool = False,
         jax_preallocate_gpu_memory: bool = False,
@@ -115,7 +115,7 @@ class HALOConfig:
 
     @property
     def logging_dir(self) -> Path:
-        """Directory for training logs (default `'./scvi_log/'`)."""
+        """Directory for training logs (default `'./halo_log/'`)."""
         return self._logging_dir
 
     @logging_dir.setter

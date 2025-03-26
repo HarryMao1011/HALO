@@ -6,7 +6,7 @@ import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from helpers import _settings as settings
+from helpers import  settings
 from complementary_models import REGISTRY_KEYS
 from data import AnnDataManager
 from data._utils import get_anndata_attribute

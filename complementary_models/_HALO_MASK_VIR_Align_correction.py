@@ -488,20 +488,16 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
 
         assert(isinstance(top_quantile, float) and top_quantile > 0 and top_quantile < 1)
         hits_matrix = self._validate_hits_matrix(hits_matrix)
-        # print(hits_matrix.shape)
-        # print(metadata)
+
         num_peaks = loadings.shape[1]
         if num_exo_features == None:
             num_exo_features = num_peaks
-        # print("num of exo features {}".format(num_exo_features))
-        ## remaped exog_features
+
         module_idx = self._argsort_peaks(topic_num,  loadings=loadings)[-int(num_exo_features*top_quantile) : ]
         zeros_index = np.where(loadings[topic_num, :] <= 0.1)[0]
-        # print("zeros index len {}".format(len(zeros_index)))
-        # print("module_idx len before {}".format(len(module_idx)))
+
 
         module_idx = np.setdiff1d(module_idx, zeros_index)
-        # print("module_idx len after {}".format(len(module_idx)))
 
 
         pvals, test_statistics = [], []
@@ -511,9 +507,7 @@ class HALOMASKVIR(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin,
             overlap = len(np.intersect1d(tf_hits, module_idx))
             module_only = len(module_idx) - overlap
             tf_only = len(tf_hits) - overlap
-            ## check this part of code
-            # neither = num_peaks - (overlap + module_only + tf_only)
-            ## reset to exo number
+
 
 
             neither = num_exo_features - (overlap + module_only + tf_only)

@@ -4,7 +4,7 @@ import anndata
 import numpy as np
 import pandas as pd
 
-from helpers import _settings as settings
+from helpers import settings
 from data._download import _download
 
 

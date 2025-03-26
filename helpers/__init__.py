@@ -17,11 +17,12 @@ from ._settings import settings
 # package_name = "halo"
 # __version__ = importlib_metadata.version(package_name)
 
-# settings.verbosity = logging.INFO
-# test_var = "test"
+settings.verbosity = logging.INFO
+test_var = "test"
 
 # Jax sets the root logger, this prevents double output.
 halo_logger = logging.getLogger("halo")
 halo_logger.propagate = False
+print("settings log_dir : {}".format(settings.logging_dir))
 
 __all__ = ["settings", "REGISTRY_KEYS", "data", "model", "external", "utils"]

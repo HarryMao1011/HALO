@@ -6,7 +6,7 @@ import numpy as np
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import LightningLoggerBase
 
-from helpers import _settings as settings
+from helpers import  settings
 from helpers._compat import Literal
 
 from ._callbacks import LoudEarlyStopping
@@ -108,6 +108,8 @@ class Trainer(pl.Trainer):
         replace_sampler_ddp: bool = False,
         **kwargs,
     ):
+        print("trainner settings.seed {}".format(settings.seed))
+        
         if default_root_dir is None:
             default_root_dir = settings.logging_dir
 
