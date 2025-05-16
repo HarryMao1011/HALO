@@ -26,7 +26,7 @@ conda activate halo-env
 ```
 
 ## The Pretrained models and datasets
-[Models](https://www.dropbox.com/scl/fo/5gxfyz08y9wbz7ywz7za7/ACPzrN0DTepINs5qrpQuBBw?rlkey=40stwy9cbkt5xol73l6vaszp1&st=a68q8dn6&dl=0) \\
+[Models](https://www.dropbox.com/scl/fo/5gxfyz08y9wbz7ywz7za7/ACPzrN0DTepINs5qrpQuBBw?rlkey=40stwy9cbkt5xol73l6vaszp1&st=a68q8dn6&dl=0) \
 [Datasets](https://www.dropbox.com/scl/fo/6n4y606w5jgrv65msz9fh/AH9jd_kv5HUCc8EsxBxLahc?rlkey=i664ihif33qe0zoqv0a09dgbm&st=cmrtaf5j&dl=0)
 
 

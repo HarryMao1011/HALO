@@ -1,6 +1,6 @@
 ## test the kernel embedding the gram matrix
 import numpy as np
-from ScoreUtils import kernel, pdinv
+from .ScoreUtils import kernel, pdinv
 import numpy.matlib
 
 def infer_nonsta_dir(X, Y, c_indx, width=0.1, IF_GP=False):
